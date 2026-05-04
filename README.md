@@ -41,22 +41,26 @@ go mod tidy
 mysql -u root -e "CREATE DATABASE my_service DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci"
 
 # 数据库迁移
-go run cmd/main.go -c config.yaml migrate up
+go run cmd/main.go migrate up
 
 # 启动服务
-go run cmd/main.go -c config.yaml server
+go run cmd/main.go server
 ```
 
 ## 用法
 
+默认加载同路径下的 `config.yaml`，可通过 `-c` 指定配置文件路径
+
+如 `./app -c /path/to/config.yaml server`
+
 ```bash
-./app                            # 帮助
-./app -c config.yaml server      # 启动 HTTP 服务
-./app -c config.yaml worker      # 启动定时任务
-./app -c config.yaml migrate up  # 数据库迁移
-./app -c config.yaml migrate down
-./app -c config.yaml migrate steps 2
-./app -c config.yaml migrate version
+./app                    # 帮助
+./app server             # 启动 HTTP 服务
+./app worker             # 启动定时任务
+./app migrate up         # 数据库迁移
+./app migrate down
+./app migrate steps 2
+./app migrate version
 ```
 
 ## 技术栈
@@ -73,5 +77,5 @@ go run cmd/main.go -c config.yaml server
 ## 使用 gonew 创建新项目
 
 ```bash
-gonew github.com/user/go-template example.com/my-service
+gonew github.com/xvq/go-template example.com/my-service
 ```
