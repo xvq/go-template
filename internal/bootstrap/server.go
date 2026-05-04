@@ -5,10 +5,10 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
-	"github.com/user/go-template/internal/config"
-	"github.com/user/go-template/internal/router"
-	"github.com/user/go-template/internal/support"
-	"github.com/user/go-template/internal/validator"
+	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/router"
+	"github.com/xvq/go-template/internal/support"
+	"github.com/xvq/go-template/internal/validator"
 )
 
 func StartServer(cfg *config.Config) {

@@ -2,9 +2,9 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/user/go-template/internal/app/handler"
-	"github.com/user/go-template/internal/app/middleware"
-	"github.com/user/go-template/internal/validator"
+	"github.com/xvq/go-template/internal/app/handler"
+	"github.com/xvq/go-template/internal/app/middleware"
+	"github.com/xvq/go-template/internal/validator"
 )
 
 func Setup(r *gin.Engine) {

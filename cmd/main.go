@@ -6,9 +6,9 @@ import (
 	"os"
 	"sort"
 
-	_ "github.com/user/go-template/internal/command"
-	"github.com/user/go-template/internal/config"
-	"github.com/user/go-template/internal/support"
+	_ "github.com/xvq/go-template/internal/command"
+	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/support"
 )
 
 func main() {

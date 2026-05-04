@@ -4,9 +4,9 @@ import (
 	"log/slog"
 
 	"github.com/robfig/cron/v3"
-	_ "github.com/user/go-template/internal/app/worker"
-	"github.com/user/go-template/internal/config"
-	"github.com/user/go-template/internal/support"
+	_ "github.com/xvq/go-template/internal/app/worker"
+	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/support"
 )
 
 func StartWorker(cfg *config.Config) {

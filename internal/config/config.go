@@ -3,7 +3,7 @@ package config
 import (
 	"log/slog"
 
-	"github.com/user/go-template/internal/common"
+	"github.com/xvq/go-template/internal/common"
 	"gopkg.in/yaml.v3"
 )
 

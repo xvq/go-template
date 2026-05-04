@@ -1,4 +1,4 @@
-module github.com/user/go-template
+module github.com/xvq/go-template
 
 go 1.25.2
 

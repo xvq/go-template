@@ -1,9 +1,9 @@
 package command
 
 import (
-	"github.com/user/go-template/internal/bootstrap"
-	"github.com/user/go-template/internal/config"
-	"github.com/user/go-template/internal/support"
+	"github.com/xvq/go-template/internal/bootstrap"
+	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/support"
 )
 
 func init() {

@@ -3,7 +3,7 @@ package worker
 import (
 	"log/slog"
 
-	"github.com/user/go-template/internal/support"
+	"github.com/xvq/go-template/internal/support"
 )
 
 func init() {

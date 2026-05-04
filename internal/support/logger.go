@@ -3,7 +3,7 @@ package support
 import (
 	"log/slog"
 
-	"github.com/user/go-template/internal/config"
+	"github.com/xvq/go-template/internal/config"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 

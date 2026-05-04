@@ -9,9 +9,9 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/database/sqlite3"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	appEmbed "github.com/user/go-template"
-	"github.com/user/go-template/internal/config"
-	"github.com/user/go-template/internal/support"
+	appEmbed "github.com/xvq/go-template"
+	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/support"
 )
 
 func init() {

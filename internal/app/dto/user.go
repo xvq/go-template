@@ -3,7 +3,7 @@ package dto
 import (
 	"time"
 
-	"github.com/user/go-template/internal/app/model"
+	"github.com/xvq/go-template/internal/app/model"
 )
 
 type CreateUserRequest struct {

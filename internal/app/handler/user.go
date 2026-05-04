@@ -4,10 +4,10 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/user/go-template/internal/app/dto"
-	"github.com/user/go-template/internal/app/model"
-	"github.com/user/go-template/internal/common"
-	"github.com/user/go-template/internal/support"
+	"github.com/xvq/go-template/internal/app/dto"
+	"github.com/xvq/go-template/internal/app/model"
+	"github.com/xvq/go-template/internal/common"
+	"github.com/xvq/go-template/internal/support"
 )
 
 func GetUser(c *gin.Context) {

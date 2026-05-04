@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
-	"github.com/user/go-template/internal/common"
+	"github.com/xvq/go-template/internal/common"
 )
 
 var V *validator.Validate
