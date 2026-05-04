@@ -1,0 +1,44 @@
+package dto
+
+import (
+	"time"
+
+	"github.com/user/go-template/internal/app/model"
+)
+
+type CreateUserRequest struct {
+	Name     string `json:"name"     validate:"required,min=2,max=32"`
+	Email    string `json:"email"    validate:"required,email"`
+	Password string `json:"password" validate:"required,min=6,max=64"`
+}
+
+type UpdateUserRequest struct {
+	Name  string `json:"name"  validate:"omitempty,min=2,max=32"`
+	Email string `json:"email" validate:"omitempty,email"`
+}
+
+type UserResponse struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func ToUserResponse(u *model.User) *UserResponse {
+	return &UserResponse{
+		ID:        u.ID,
+		Name:      u.Name,
+		Email:     u.Email,
+		CreatedAt: u.CreatedAt,
+		UpdatedAt: u.UpdatedAt,
+	}
+}
+
+func ToUserResponses(users []model.User) []UserResponse {
+	result := make([]UserResponse, len(users))
+	for i, u := range users {
+		result[i] = *ToUserResponse(&u)
+	}
+	return result
+}

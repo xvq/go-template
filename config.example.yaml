@@ -1,0 +1,42 @@
+server:
+  port: 8080
+  mode: debug  # debug / release / test
+
+database:
+  default: mysql
+  connections:
+    mysql:
+      driver: mysql
+      host: 127.0.0.1
+      port: 3306
+      username: root
+      password: ""
+      database: my_service
+      charset: utf8mb4
+      # collation: utf8mb4_unicode_ci
+      max_idle_conns: 10
+      max_open_conns: 100
+    # sqlite:
+    #   driver: sqlite
+    #   file: data/sqlite.db
+    # postgres:
+    #   driver: postgres
+    #   host: 127.0.0.1
+    #   port: 5432
+    #   username: postgres
+    #   password: ""
+    #   database: my_service
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: ""
+  db: 0
+
+log:
+  level: error  # debug / info / warn / error
+  dir: logs/
+  max_size: 100     # single file max MB
+  max_backups: 7    # max backup files
+  max_age: 7        # max days
+  compress: true
