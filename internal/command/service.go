@@ -2,25 +2,24 @@ package command
 
 import (
 	"github.com/xvq/go-template/internal/bootstrap"
-	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/support"
+	"github.com/xvq/go-template/internal/core"
 )
 
 func init() {
-	support.RegisterCommand(&support.Command{
+	core.RegisterCommand(&core.Command{
 		Name: "server",
 		Desc: "Start HTTP server",
 		Run: func(args []string) error {
-			bootstrap.StartServer(config.AppConfig)
+			bootstrap.StartServer()
 			return nil
 		},
 	})
 
-	support.RegisterCommand(&support.Command{
+	core.RegisterCommand(&core.Command{
 		Name: "worker",
 		Desc: "Start cron worker",
 		Run: func(args []string) error {
-			bootstrap.StartWorker(config.AppConfig)
+			bootstrap.StartWorker()
 			return nil
 		},
 	})

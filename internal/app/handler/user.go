@@ -7,7 +7,7 @@ import (
 	"github.com/xvq/go-template/internal/app/dto"
 	"github.com/xvq/go-template/internal/app/model"
 	"github.com/xvq/go-template/internal/common"
-	"github.com/xvq/go-template/internal/support"
+	"github.com/xvq/go-template/internal/core"
 )
 
 func GetUser(c *gin.Context) {
@@ -18,7 +18,7 @@ func GetUser(c *gin.Context) {
 	}
 
 	var user model.User
-	if result := support.DB.First(&user, id); result.Error != nil {
+	if result := core.DB.First(&user, id); result.Error != nil {
 		common.Error(c, 40401, "用户不存在")
 		return
 	}
@@ -28,14 +28,14 @@ func GetUser(c *gin.Context) {
 
 func ListUsers(c *gin.Context) {
 	var users []model.User
-	support.DB.Find(&users)
+	core.DB.Find(&users)
 
 	common.Success(c, dto.ToUserResponses(users))
 }
 
 func CreateUser(c *gin.Context, req *dto.CreateUserRequest) {
 	user := model.User{Name: req.Name, Email: req.Email, Password: req.Password}
-	if err := support.DB.Create(&user).Error; err != nil {
+	if err := core.DB.Create(&user).Error; err != nil {
 		common.Error(c, 50001, "创建失败")
 		return
 	}
@@ -50,7 +50,7 @@ func UpdateUser(c *gin.Context, req *dto.UpdateUserRequest) {
 		return
 	}
 
-	updates := map[string]interface{}{}
+	updates := map[string]any{}
 	if req.Name != "" {
 		updates["name"] = req.Name
 	}
@@ -58,7 +58,7 @@ func UpdateUser(c *gin.Context, req *dto.UpdateUserRequest) {
 		updates["email"] = req.Email
 	}
 
-	if err := support.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+	if err := core.DB.Model(&model.User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		common.Error(c, 50001, "更新失败")
 		return
 	}
@@ -73,7 +73,7 @@ func DeleteUser(c *gin.Context) {
 		return
 	}
 
-	if err := support.DB.Delete(&model.User{}, id).Error; err != nil {
+	if err := core.DB.Delete(&model.User{}, id).Error; err != nil {
 		common.Error(c, 50001, "删除失败")
 		return
 	}

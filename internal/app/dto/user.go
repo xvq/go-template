@@ -7,14 +7,14 @@ import (
 )
 
 type CreateUserRequest struct {
-	Name     string `json:"name"     validate:"required,min=2,max=32"`
-	Email    string `json:"email"    validate:"required,email"`
-	Password string `json:"password" validate:"required,min=6,max=64"`
+	Name     string `json:"name"     binding:"required,min=2,max=32"`
+	Email    string `json:"email"    binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6,max=64"`
 }
 
 type UpdateUserRequest struct {
-	Name  string `json:"name"  validate:"omitempty,min=2,max=32"`
-	Email string `json:"email" validate:"omitempty,email"`
+	Name  string `json:"name"  binding:"omitempty,min=2,max=32"`
+	Email string `json:"email" binding:"omitempty,email"`
 }
 
 type UserResponse struct {

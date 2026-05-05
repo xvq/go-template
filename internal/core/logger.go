@@ -1,4 +1,4 @@
-package support
+package core
 
 import (
 	"log/slog"
@@ -7,7 +7,8 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-func NewLogger(cfg config.LogConfig, name string) {
+func InitLogger(name string) {
+	cfg := config.AppConfig.Log
 	w := &lumberjack.Logger{
 		Filename:   cfg.Dir + name + "/" + name + ".log",
 		MaxSize:    cfg.MaxSize,

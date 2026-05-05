@@ -3,11 +3,11 @@ package worker
 import (
 	"log/slog"
 
-	"github.com/xvq/go-template/internal/support"
+	"github.com/xvq/go-template/internal/core"
 )
 
 func init() {
-	support.RegisterWorker(&support.Worker{
+	core.RegisterWorker(&core.Worker{
 		Name: "clean_token",
 		Cron: "@every 30m",
 		Run:  run,

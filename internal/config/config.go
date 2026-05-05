@@ -31,7 +31,7 @@ type DBConfig struct {
 	Username     string `yaml:"username"`
 	Password     string `yaml:"password"`
 	Database     string `yaml:"database"`
-	File         string `yaml:"file"`   // sqlite
+	File         string `yaml:"file"` // sqlite
 	Charset      string `yaml:"charset"`
 	Collation    string `yaml:"collation"`
 	MaxIdleConns int    `yaml:"max_idle_conns"`
@@ -89,5 +89,6 @@ func Load(path string) *Config {
 		panic("解析配置文件失败: " + err.Error())
 	}
 
+	AppConfig = cfg
 	return cfg
 }

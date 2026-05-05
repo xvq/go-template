@@ -1,4 +1,9 @@
-package support
+package core
+
+import (
+	"fmt"
+	"sort"
+)
 
 type Action struct {
 	Name string
@@ -28,10 +33,6 @@ func RegisterCommand(c *Command) {
 	commands[c.Name] = c
 }
 
-func Commands() map[string]*Command {
-	return commands
-}
-
 func Execute(name string, args []string) bool {
 	cmd, ok := commands[name]
 	if !ok {
@@ -57,4 +58,23 @@ func Execute(name string, args []string) bool {
 	}
 
 	return false
+}
+
+func PrintHelp() {
+	names := make([]string, 0, len(commands))
+	for n := range commands {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	fmt.Println("Usage: <program> [-c config.yaml] <command> [action] [args]")
+	fmt.Println()
+	fmt.Println("Commands:")
+	for _, n := range names {
+		cmd := commands[n]
+		fmt.Printf("  %s\t%s\n", n, cmd.Desc)
+		for _, a := range cmd.Actions {
+			fmt.Printf("    %s\t%s\n", a.Name, a.Desc)
+		}
+	}
 }

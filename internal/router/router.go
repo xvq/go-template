@@ -14,8 +14,8 @@ func Setup(r *gin.Engine) {
 	{
 		api.GET("/users", handler.ListUsers)
 		api.GET("/users/:id", handler.GetUser)
-		api.POST("/users", 	validator.Bind(handler.CreateUser))
-		api.PUT("/users/:id", 	validator.Bind(handler.UpdateUser))
+		api.POST("/users", validator.BindJSON(handler.CreateUser))
+		api.PUT("/users/:id", validator.BindJSON(handler.UpdateUser))
 		api.DELETE("/users/:id", handler.DeleteUser)
 	}
 }

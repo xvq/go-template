@@ -5,17 +5,16 @@ import (
 
 	"github.com/robfig/cron/v3"
 	_ "github.com/xvq/go-template/internal/app/worker"
-	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/support"
+	"github.com/xvq/go-template/internal/core"
 )
 
-func StartWorker(cfg *config.Config) {
-	support.NewLogger(cfg.Log, "worker")
-	support.NewDB(cfg)
-	support.NewRedis(cfg)
+func StartWorker() {
+	core.InitLogger("worker")
+	core.InitDB()
+	core.InitRedis()
 
 	c := cron.New()
-	for _, w := range support.GetWorkers() {
+	for _, w := range core.GetWorkers() {
 		if w.Cron == "" {
 			slog.Info("worker starting (standalone)", "name", w.Name)
 			go w.Run()

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -11,14 +12,14 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	appEmbed "github.com/xvq/go-template"
 	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/support"
+	"github.com/xvq/go-template/internal/core"
 )
 
 func init() {
-	support.RegisterCommand(&support.Command{
+	core.RegisterCommand(&core.Command{
 		Name: "migrate",
 		Desc: "Run database migrations",
-		Actions: []*support.Action{
+		Actions: []*core.Action{
 			{Name: "up", Desc: "Apply all up migrations", Run: runUp},
 			{Name: "down", Desc: "Rollback all down migrations", Run: runDown},
 			{Name: "steps", Desc: "Migrate N steps (+up, -down)", Run: runSteps},
@@ -47,7 +48,7 @@ func runUp(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("migrate up failed: %w", err)
 	}
 	fmt.Println("migrate up done")
@@ -62,7 +63,7 @@ func runDown(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := m.Down(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("migrate down failed: %w", err)
 	}
 	fmt.Println("migrate down done")
@@ -84,7 +85,7 @@ func runSteps(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := m.Steps(n); err != nil && err != migrate.ErrNoChange {
+	if err := m.Steps(n); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("migrate steps failed: %w", err)
 	}
 	fmt.Println("migrate steps done")

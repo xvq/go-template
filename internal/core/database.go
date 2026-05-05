@@ -1,4 +1,4 @@
-package support
+package core
 
 import (
 	"fmt"
@@ -12,8 +12,8 @@ import (
 
 var DB *gorm.DB
 
-func NewDB(cfg *config.Config) {
-	conn := cfg.DefaultDB()
+func InitDB() {
+	conn := config.AppConfig.DefaultDB()
 	if conn == nil || dbHost(conn) == "" {
 		return
 	}

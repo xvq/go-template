@@ -1,4 +1,4 @@
-package support
+package core
 
 type Worker struct {
 	Name string

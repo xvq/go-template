@@ -1,4 +1,4 @@
-package support
+package core
 
 import (
 	"context"
@@ -11,15 +11,15 @@ import (
 
 var Redis *redis.Client
 
-func NewRedis(cfg *config.Config) {
-	if cfg.Redis.Host == "" {
+func InitRedis() {
+	if config.AppConfig.Redis.Host == "" {
 		return
 	}
 
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
+		Addr:     fmt.Sprintf("%s:%d", config.AppConfig.Redis.Host, config.AppConfig.Redis.Port),
+		Password: config.AppConfig.Redis.Password,
+		DB:       config.AppConfig.Redis.DB,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

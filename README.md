@@ -18,7 +18,7 @@ Go 项目模板，单二进制多命令架构。
 │   ├── common/                  # 工具函数、统一响应
 │   ├── config/                  # 配置结构体
 │   ├── router/                  # 路由注册
-│   ├── support/                 # 基础支撑（DB、Redis、Log）
+│   ├── core/                    # 基础设施（DB、Redis、Log）
 │   └── validator/               # 参数校验 + 自动绑定
 ├── migrations/                  # SQL 迁移文件（编译进二进制）
 ├── embed.go                     # 静态资源打包

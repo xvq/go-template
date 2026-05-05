@@ -4,11 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 
 	_ "github.com/xvq/go-template/internal/command"
 	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/support"
+	"github.com/xvq/go-template/internal/core"
 )
 
 func main() {
@@ -21,37 +20,17 @@ func main() {
 	tail := flag.Args()
 
 	if showHelp || len(tail) == 0 || tail[0] == "help" {
-		printHelp()
+		core.PrintHelp()
 		return
 	}
 
-	config.AppConfig = config.Load(configPath)
+	config.Load(configPath)
 
-	if support.Execute(tail[0], tail[1:]) {
+	if core.Execute(tail[0], tail[1:]) {
 		return
 	}
 
 	fmt.Fprintf(os.Stderr, "unknown command: %s\n", tail[0])
-	printHelp()
+	core.PrintHelp()
 	os.Exit(1)
-}
-
-func printHelp() {
-	cmds := support.Commands()
-	names := make([]string, 0, len(cmds))
-	for n := range cmds {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-
-	fmt.Println("Usage: <program> [-c config.yaml] <command> [action] [args]")
-	fmt.Println()
-	fmt.Println("Commands:")
-	for _, n := range names {
-		cmd := cmds[n]
-		fmt.Printf("  %s\t%s\n", n, cmd.Desc)
-		for _, a := range cmd.Actions {
-			fmt.Printf("    %s\t%s\n", a.Name, a.Desc)
-		}
-	}
 }
