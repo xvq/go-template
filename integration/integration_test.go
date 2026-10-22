@@ -1,0 +1,274 @@
+//go:build integration
+
+package integration
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http/httptest"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
+	"github.com/xvq/go-template/internal/app/admin/service"
+	"github.com/xvq/go-template/internal/bootstrap"
+	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/infrastructure/cli"
+	"github.com/xvq/go-template/internal/infrastructure/database"
+	"github.com/xvq/go-template/internal/infrastructure/session"
+	"github.com/xvq/go-template/internal/infrastructure/taskqueue"
+	settingsservice "github.com/xvq/go-template/internal/service/settings"
+	"gorm.io/gorm"
+)
+
+// Uses ONLY explicitly supplied test services. A fresh randomly named database
+// is created and removed; existing application tables are never touched.
+func environment(t *testing.T) (config.Config, *gorm.DB, *redis.Client, *slog.Logger) {
+	t.Helper()
+	addr, raddr := os.Getenv("GOTEMPLATE_TEST_MYSQL_ADDRESS"), os.Getenv("GOTEMPLATE_TEST_REDIS_ADDRESS")
+	if addr == "" || raddr == "" {
+		t.Skip("set GOTEMPLATE_TEST_MYSQL_ADDRESS and GOTEMPLATE_TEST_REDIS_ADDRESS for real integration tests")
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 8)
+	if _, err = rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	name := "gotemplate_test_" + hex.EncodeToString(b)
+	c := config.Defaults()
+	c.Database.Host = host
+	c.Database.Port = n
+	c.Database.Username = os.Getenv("GOTEMPLATE_TEST_MYSQL_USER")
+	if c.Database.Username == "" {
+		c.Database.Username = "root"
+	}
+	c.Database.Password = os.Getenv("GOTEMPLATE_TEST_MYSQL_PASSWORD")
+	admin, err := sql.Open("mysql", database.DSN(c.Database))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = admin.Exec("CREATE DATABASE `" + name + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, e := admin.Exec("DROP DATABASE `" + name + "`"); e != nil {
+			t.Errorf("remove test database: %v", e)
+		}
+		admin.Close()
+	})
+	c.Database.Database = name
+	c.Redis.Address = raddr
+	c.Redis.Password = os.Getenv("GOTEMPLATE_TEST_REDIS_PASSWORD")
+	c.Redis.Prefix = name
+	migration, err := cli.OpenMigrator(c.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = migration.Up(); err != nil {
+		migration.Close()
+		t.Fatal(err)
+	}
+	a, e := migration.Close()
+	if a != nil || e != nil {
+		t.Fatal(a, e)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	db, err := database.Open(c.Database, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pool, _ := db.DB(); pool.Close() })
+	r := redis.NewClient(&redis.Options{Addr: raddr, Password: c.Redis.Password})
+	if err = r.Ping(context.Background()).Err(); err != nil {
+		r.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		keys := r.Scan(ctx, 0, name+":*", 100).Iterator()
+		for keys.Next(ctx) {
+			r.Del(ctx, keys.Val())
+		}
+		if err := keys.Err(); err != nil {
+			t.Error(err)
+		}
+		r.Close()
+	})
+	return c, db, r, log
+}
+
+func call(t *testing.T, app *fiber.App, method, path, token, body string, want int) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != want {
+		t.Fatalf("%s %s got %d want %d: %v", method, path, resp.StatusCode, want, out)
+	}
+	return out
+}
+func TestAdminAPISettingsAndMigrations(t *testing.T) {
+	c, db, r, log := environment(t)
+	ctx := context.Background()
+	admins, err := service.NewAdmin(db, session.New(r, c.Redis.Prefix), c.Auth.Admin, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := admins.Create(ctx, "admin", "管理员", "secure-password", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := bootstrap.NewServer(ctx, &bootstrap.Resources{Config: c, DB: db, Redis: r, Log: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call(t, app, "GET", "/api/admin/admins", "", "", 401)
+	call(t, app, "POST", "/api/admin/login", "", `{"username":"admin","password":"wrong"}`, 401)
+	login := call(t, app, "POST", "/api/admin/login", "", `{"username":"admin","password":"secure-password"}`, 200)
+	token := login["data"].(map[string]any)["token"].(string)
+	call(t, app, "GET", "/health/ready", "", "", 200)
+	me := call(t, app, "GET", "/api/admin/me", token, "", 200)
+	if _, ok := me["data"].(map[string]any)["password_hash"]; ok {
+		t.Fatal("password hash leaked")
+	}
+	created := call(t, app, "POST", "/api/admin/admins", token, `{"username":"second","password":"secure-password","display_name":"第二个管理员"}`, 201)
+	id := uint64(created["data"].(map[string]any)["id"].(float64))
+	call(t, app, "POST", "/api/admin/admins", token, `{"username":"second","password":"secure-password"}`, 409)
+	call(t, app, "PATCH", fmt.Sprintf("/api/admin/admins/%d", id), token, `{"display_name":"","enabled":false}`, 200)
+	call(t, app, "GET", "/api/admin/settings", token, "", 200)
+	call(t, app, "PATCH", "/api/admin/settings", token, `{"values":{"site.name":"Integration","site.maintenance":true}}`, 200)
+	settings := settingsservice.NewSettings(db, r, c.Redis.Prefix, c.Settings.CacheTTL, log)
+	if name, err := settings.String(ctx, "site.name"); err != nil || name != "Integration" {
+		t.Fatal(name, err)
+	}
+	call(t, app, "PATCH", "/api/admin/settings", token, `{"values":{"site.maintenance":"true"}}`, 422)
+	call(t, app, "GET", "/api/admin/login-logs", token, "", 200)
+	call(t, app, "DELETE", fmt.Sprintf("/api/admin/admins/%d", id), token, "", 200)
+	call(t, app, "DELETE", fmt.Sprintf("/api/admin/admins/%d", first.ID), token, "", 409)
+	call(t, app, "PUT", "/api/admin/me/password", token, `{"current_password":"secure-password","password":"new-secure-password"}`, 200)
+	call(t, app, "GET", "/api/admin/me", token, "", 401)
+	migration, err := cli.OpenMigrator(c.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migration.Close()
+	if err = migration.Steps(-1); err != nil {
+		t.Fatal(err)
+	}
+	if err = migration.Up(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// These fixture models exist only in the isolated test DB. They demonstrate
+// four-table nested eager loading without adding end-user business to template.
+type customer struct {
+	ID     uint
+	Orders []order `gorm:"foreignKey:CustomerID"`
+}
+type order struct {
+	ID         uint
+	CustomerID uint
+	Items      []item `gorm:"foreignKey:OrderID"`
+}
+type item struct {
+	ID        uint
+	OrderID   uint
+	ProductID uint
+	Product   product
+}
+type product struct {
+	ID   uint
+	Name string
+}
+
+func TestGORMNestedAssociations(t *testing.T) {
+	_, db, _, _ := environment(t)
+	if err := db.AutoMigrate(&customer{}, &order{}, &product{}, &item{}); err != nil {
+		t.Fatal(err)
+	}
+	c := customer{Orders: []order{{Items: []item{{Product: product{Name: "demo"}}}}}}
+	if err := db.Create(&c).Error; err != nil {
+		t.Fatal(err)
+	}
+	var loaded customer
+	if err := db.Preload("Orders.Items.Product").First(&loaded, c.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Orders) != 1 || len(loaded.Orders[0].Items) != 1 || loaded.Orders[0].Items[0].Product.Name != "demo" {
+		t.Fatalf("bad association graph: %+v", loaded)
+	}
+}
+
+func TestRealQueueConsumption(t *testing.T) {
+	c, _, _, log := environment(t)
+	c.Queue.Enabled = true
+	c.Queue.DefaultQueue = c.Redis.Prefix
+	c.Queue.Queues = map[string]int{c.Redis.Prefix: 1}
+	c.Queue.Concurrency = 1
+	server := taskqueue.NewServer(c, log)
+	mux := asynq.NewServeMux()
+	done := make(chan struct{}, 1)
+	mux.HandleFunc("integration:ping", func(ctx context.Context, task *asynq.Task) error {
+		select {
+		case done <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+	if err := server.Start(mux); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		server.Shutdown()
+		inspector := asynq.NewInspector(taskqueue.RedisOptions(c))
+		defer inspector.Close()
+		if err := inspector.DeleteQueue(c.Queue.DefaultQueue, true); err != nil {
+			t.Log("test queue cleanup:", err)
+		}
+	})
+	client := taskqueue.NewClient(c)
+	defer client.Close()
+	if _, err := client.Enqueue(context.Background(), "integration:ping", map[string]int{"id": 1}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker did not consume task")
+	}
+}

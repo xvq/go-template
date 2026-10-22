@@ -1,0 +1,9 @@
+/config.yaml
+/logs/
+/.cache/
+/bin/
+*.exe
+*.test
+coverage.out
+.idea/
+.vscode/
