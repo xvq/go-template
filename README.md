@@ -58,6 +58,7 @@ app [-c config.yaml] admin:create --username admin
 app [-c config.yaml] queue:example --delay 10s
 app [-c config.yaml] config:init
 app hello
+app version
 app --help
 ```
 
@@ -138,17 +139,16 @@ Asynqmon 与 Asynq CLI 按需单独安装，连接同一个队列 Redis，不嵌
 ```sh
 go test ./...
 go vet ./...
-go build -trimpath -ldflags="-s -w" -o bin/app ./cmd
+go run ./scripts/build.go
 ```
 
-Windows 输出可使用 `bin/app.exe`。Linux 交叉编译（PowerShell）：
+脚本默认输出到 `bin/app`，Windows 输出为 `bin/app.exe`。通过参数进行 Linux 交叉编译，不需要修改当前终端的 GOOS：
 
 ```powershell
-$env:GOOS='linux'
-$env:GOARCH='amd64'
-$env:CGO_ENABLED='0'
-go build -trimpath -ldflags='-s -w' -o bin/app-linux-amd64 ./cmd
+go run ./scripts/build.go -os linux -arch amd64
 ```
+
+运行生成的程序加 version 可查看版本、完整提交号、UTC 构建时间和 Go 版本。脚本从当前项目 Git 历史读取 v 开头的版本标签：标签处为 v0.1.0，之后为 v0.1.0-3-gabcdef0；无标签为 dev-提交号。存在未提交修改（含未跟踪文件，不含忽略文件）时追加 -dirty。无 Git 信息的源码构建显示 dev / unknown；普通 go run ./cmd version 也使用开发默认值。脚本自动读取模块名；克隆成新项目时注意继承的 Git 标签。CI 获取完整历史并使用同一脚本构建，但不自动发布。
 
 单位/组件测试使用 miniredis 与 sqlmock，不连接业务数据库。真实迁移、CRUD、多表关联和队列消费使用单独的集成测试。启动 Compose 后（PowerShell）：
 

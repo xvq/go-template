@@ -12,13 +12,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
       - run: go test ./...
       - run: go vet ./...
-      - run: go build -o bin/app ./cmd
+      - run: go run ./scripts/build.go
       - if: runner.os == 'Linux'
         run: go test -race ./...
   integration:

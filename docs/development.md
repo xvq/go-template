@@ -110,7 +110,7 @@ cron 使用五段表达式（分钟粒度），也支持 `@every 30s`。同一�
 
 在 `internal/command/` 创建 Cobra 命令，并在 `internal/command/register.go` 的 `Register` 显式登记。参考 `hello`、`admin:create`、`queue:example`。只加载需要的资源，使用 `cmd.Context()`、返回 error，禁止从业务代码直接 os.Exit。预期错误不用 panic。
 
-`internal/infrastructure/cli/root.go` 负责根命令、公共参数和内置命令注册，并通过 `command.Register(&path)` 加入业务命令。cli 目录保留 server、queue:work、schedule、migrate、config:init；业务目录 `internal/command` 保留 admin:create、hello、queue:example 及注册文件。每个命令独立文件，migrate 的 up/down/version/force 子命令放在同一个文件。
+`internal/infrastructure/cli/root.go` 负责根命令、公共参数和内置命令注册，并通过 `command.Register(&path)` 加入业务命令。cli 目录保留 server、queue:work、schedule、migrate、config:init、version；业务目录 `internal/command` 保留 admin:create、hello、queue:example 及注册文件。每个命令独立文件，migrate 的 up/down/version/force 子命令放在同一个文件。
 
 新增命令时在自己的文件提供 `newXxx() *cobra.Command` 构造函数，再加入 `command.Register` 返回的列表。需要配置路径时接收 `path *string`，在 RunE 执行时读取 `*path`，以获得解析后的 `--config` 参数。构造函数只定义命令及参数，资源初始化和清理留在命令执行逻辑中；不使用 `init()` 自动注册。仅该命令使用的辅助函数也留在对应文件，例如管理员密码读取。
 
@@ -127,3 +127,5 @@ HTTP 未识别的内部错误和显式 5xx 错误向前端返回通用提示；�
 - Mock 测试不能证明 MySQL 事务隔离或真实 Redis 的全部语义，发布前执行 CI 集成测试。
 - 不对生产数据库执行测试；所有自动建表只允许出现在随机创建的测试库。
 
+
+版本查询不加载配置或服务。通过 go run ./scripts/build.go 构建时，脚本读取 Git 元数据，通过 -ldflags -X 注入 cli/version.go 的字符串变量；不手工修改这些默认变量，不在运行时修改它们。发布构建应使用干净工作区及完整 Git 标签历史。

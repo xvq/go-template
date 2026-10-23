@@ -10,6 +10,7 @@ func NewRoot() *cobra.Command {
 	root := &cobra.Command{Use: "app", Short: "Go API 模板", SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().StringVarP(&path, "config", "c", "config.yaml", "配置文件路径")
 	root.AddCommand(
+		newVersion(),
 		newConfigInit(&path),
 		newServer(&path),
 		newSchedule(&path),
