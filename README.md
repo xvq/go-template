@@ -11,20 +11,47 @@ Fiber + GORM + MySQL 的纯 API 项目模板。内置管理员、登录日志、
 
 ## 快速开始
 
+### 1. 从模板创建项目
+
+安装 Go 官方工具仓库提供的 [gonew](https://pkg.go.dev/golang.org/x/tools/cmd/gonew)（首次使用时执行）：
+
+```sh
+go install golang.org/x/tools/cmd/gonew@latest
+```
+
+在新项目的父目录执行，将 `github.com/yourname/myapp` 换成自己的模块路径：
+
+```sh
+gonew github.com/xvq/go-template@main github.com/yourname/myapp
+cd myapp
+```
+
+这会使用模板的 `main` 分支创建 `myapp` 目录，并自动修改 `go.mod` 和 Go 源码中的模块导入路径。请确保 Go 的工具安装目录（默认 `GOPATH/bin`）已加入 `PATH`。
+
+### 2. 初始化配置
+
 ```sh
 go mod download
 go run ./cmd config:init
 ```
 
-编辑生成的 `config.yaml`，填写 MySQL 和 Redis 连接信息。实际配置不会提交到 Git。默认配置路径相对于**当前工作目录**；部署建议使用绝对路径。
+编辑生成的 `config.yaml`：
 
-如使用附带的本地服务（可选，需要 Docker）：
+- 设置 `app.name` 和项目专用的 `redis.prefix`，例如 `myapp`。
+- 填写 MySQL 和 Redis 连接信息，使用新项目自己的数据库。
+- 如启用队列，为队列配置独立的 Redis DB 或实例。
+
+实际配置文件已被 Git 忽略。默认配置路径相对于**当前工作目录**；部署建议使用绝对路径。
+
+本地开发可以使用已有 MySQL/Redis，也可以通过附带的 Compose 启动（需要 Docker）：
 
 ```sh
 docker compose up -d --wait
 ```
 
 这会创建 `go_template` 数据库和账号 `app`，配置文件中的数据库密码填 `local-app-password`。Compose 密码只用于本地开发；已有 MySQL/Redis 可直接使用，不必安装 Docker。端口冲突时修改映射与配置。
+
+### 3. 初始化数据库并启动
 
 ```sh
 go run ./cmd migrate up
@@ -150,7 +177,7 @@ go run ./scripts/build.go
 go run ./scripts/build.go -os linux -arch amd64
 ```
 
-运行生成的程序加 version 可查看版本、完整提交号、UTC 构建时间和 Go 版本。脚本从当前项目 Git 历史读取 v 开头的版本标签：标签处为 v0.1.0，之后为 v0.1.0-3-gabcdef0；无标签为 dev-提交号。存在未提交修改（含未跟踪文件，不含忽略文件）时追加 -dirty。无 Git 信息的源码构建显示 dev / unknown；普通 go run ./cmd version 也使用开发默认值。脚本自动读取模块名；克隆成新项目时注意继承的 Git 标签。CI 获取完整历史并使用同一脚本构建，但不自动发布。
+运行生成的程序加 version 可查看版本、完整提交号、UTC 构建时间和 Go 版本。脚本从当前项目 Git 历史读取 v 开头的版本标签：标签处为 v0.1.0，之后为 v0.1.0-3-gabcdef0；无标签为 dev-提交号。存在未提交修改（含未跟踪文件，不含忽略文件）时追加 -dirty。无 Git 信息的源码构建显示 dev / unknown；普通 go run ./cmd version 也使用开发默认值。脚本自动读取模块名。新项目可通过 `git init` 建立自己的版本历史。CI 获取完整历史并使用同一脚本构建，但不自动发布。
 
 单位/组件测试使用 miniredis 与 sqlmock，不连接业务数据库。真实迁移、CRUD、多表关联和队列消费使用单独的集成测试。启动 Compose 后（PowerShell）：
 
@@ -165,7 +192,3 @@ go test -tags=integration ./integration -count=1 -timeout=3m
 这些环境变量仅用于测试，不参与应用配置。集成测试创建随机命名的专用数据库并在结束时删除，需要创建/删除数据库权限；仅指向测试服务。未设置地址时测试会跳过。GitHub CI 包含 Windows/Linux 单元测试、Linux race 检查及 MySQL/Redis 服务集成测试。
 
 更多内容：[API 文档](docs/api.md)、[开发约定](docs/development.md)、[部署说明](docs/deployment.md)。
-
-## 克隆为新项目
-
-修改 `go.mod` 的模块名，并统一替换源码中的 `github.com/xvq/go-template` 导入前缀，再运行 `go mod tidy`。修改 `app.name`、`redis.prefix` 及项目数据库；队列使用独立 DB/实例。不要复制其他项目的真实配置或会话数据。
