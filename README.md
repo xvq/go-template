@@ -26,8 +26,6 @@ gonew github.com/xvq/go-template@main github.com/yourname/myapp
 cd myapp
 ```
 
-这会使用模板的 `main` 分支创建 `myapp` 目录，并自动修改 `go.mod` 和 Go 源码中的模块导入路径。请确保 Go 的工具安装目录（默认 `GOPATH/bin`）已加入 `PATH`。
-
 ### 2. 初始化配置
 
 ```sh
@@ -38,8 +36,7 @@ go run ./cmd config:init
 编辑生成的 `config.yaml`：
 
 - 设置 `app.name` 和项目专用的 `redis.prefix`，例如 `myapp`。
-- 填写 MySQL 和 Redis 连接信息，使用新项目自己的数据库。
-- 如启用队列，为队列配置独立的 Redis DB 或实例。
+- 填写 MySQL 和 Redis 连接信息。
 
 实际配置文件已被 Git 忽略。默认配置路径相对于**当前工作目录**；部署建议使用绝对路径。
 
@@ -49,7 +46,7 @@ go run ./cmd config:init
 docker compose up -d --wait
 ```
 
-这会创建 `go_template` 数据库和账号 `app`，配置文件中的数据库密码填 `local-app-password`。Compose 密码只用于本地开发；已有 MySQL/Redis 可直接使用，不必安装 Docker。端口冲突时修改映射与配置。
+这会创建 `go_template` 数据库和账号 `app`，配置文件中的数据库密码填 `local-app-password`。Compose 密码只用于本地开发；已有 MySQL/Redis 可直接使用，不必安装 Docker。
 
 ### 3. 初始化数据库并启动
 
