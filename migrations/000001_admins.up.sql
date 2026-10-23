@@ -5,8 +5,8 @@ CREATE TABLE admins (
  password_hash VARCHAR(255) NOT NULL,
  enabled BOOLEAN NOT NULL DEFAULT TRUE,
  auth_version BIGINT UNSIGNED NOT NULL DEFAULT 1,
- created_at DATETIME(3) NOT NULL,
- updated_at DATETIME(3) NOT NULL,
+ created_at DATETIME NOT NULL,
+ updated_at DATETIME NOT NULL,
  UNIQUE KEY uk_admins_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -18,7 +18,7 @@ CREATE TABLE admin_login_logs (
  reason VARCHAR(64) NOT NULL,
  ip VARCHAR(64) NOT NULL,
  user_agent VARCHAR(512) NOT NULL,
- created_at DATETIME(3) NOT NULL,
+ created_at DATETIME NOT NULL,
  KEY idx_login_admin_created (admin_id, created_at),
  KEY idx_login_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -26,6 +26,6 @@ CREATE TABLE admin_login_logs (
 CREATE TABLE settings (
  `key` VARCHAR(128) NOT NULL PRIMARY KEY,
  `value` JSON NOT NULL,
- created_at DATETIME(3) NOT NULL,
- updated_at DATETIME(3) NOT NULL
+ created_at DATETIME NOT NULL,
+ updated_at DATETIME NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

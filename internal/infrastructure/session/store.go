@@ -8,9 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"regexp"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 var ErrInvalid = errors.New("invalid session")
@@ -20,8 +21,8 @@ type Data struct {
 	Realm     string `json:"realm"`
 	SubjectID uint64 `json:"subject_id"`
 	Version   uint64 `json:"version"`
-	CreatedAt int64  `json:"created_at"`
-	ExpiresAt int64  `json:"expires_at"`
+	CreatedAt int64  `json:"created_at"` // Unix seconds (UTC).
+	ExpiresAt int64  `json:"expires_at"` // Unix seconds (UTC).
 }
 type Store struct {
 	r      redis.UniversalClient
@@ -42,15 +43,15 @@ var issueScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
 local now = tonumber(ARGV[1])
 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
-if ARGV[5] == '0' then
+if ARGV[4] == '0' then
  local old = redis.call('ZRANGE', KEYS[2], 0, -1)
- for _, hash in ipairs(old) do redis.call('DEL', ARGV[6] .. hash) end
+ for _, hash in ipairs(old) do redis.call('DEL', ARGV[5] .. hash) end
  redis.call('DEL', KEYS[2])
 end
-redis.call('SET', KEYS[1], ARGV[3], 'PX', ARGV[4])
-redis.call('ZADD', KEYS[2], ARGV[2], ARGV[7])
+redis.call('SET', KEYS[1], ARGV[3], 'EXAT', ARGV[2])
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[6])
 local last = redis.call('ZRANGE', KEYS[2], -1, -1, 'WITHSCORES')
-redis.call('PEXPIREAT', KEYS[2], last[2])
+redis.call('EXPIREAT', KEYS[2], last[2])
 return 1
 `)
 
@@ -58,8 +59,8 @@ func (s *Store) Issue(ctx context.Context, realm string, id, version uint64, ttl
 	if !realmPattern.MatchString(realm) || id == 0 || ttl < time.Second {
 		return "", nil, fmt.Errorf("invalid session arguments")
 	}
-	now := time.Now()
-	d := &Data{Realm: realm, SubjectID: id, Version: version, CreatedAt: now.UnixMilli(), ExpiresAt: now.Add(ttl).UnixMilli()}
+	now := time.Now().Unix()
+	d := &Data{Realm: realm, SubjectID: id, Version: version, CreatedAt: now, ExpiresAt: now + int64(ttl/time.Second)}
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return "", nil, err
@@ -75,7 +76,7 @@ func (s *Store) Issue(ctx context.Context, realm string, id, version uint64, ttl
 		}
 		token := hex.EncodeToString(b)
 		hash := Hash(token)
-		n, e := issueScript.Run(ctx, s.r, []string{s.sessionKey(hash), s.indexKey(realm, id)}, now.UnixMilli(), d.ExpiresAt, string(raw), ttl.Milliseconds(), allow, s.prefix+"session:", hash).Int()
+		n, e := issueScript.Run(ctx, s.r, []string{s.sessionKey(hash), s.indexKey(realm, id)}, now, d.ExpiresAt, string(raw), allow, s.prefix+"session:", hash).Int()
 		if e != nil {
 			return "", nil, fmt.Errorf("issue session: %w", e)
 		}
@@ -103,7 +104,7 @@ func (s *Store) Validate(ctx context.Context, token string) (*Data, error) {
 	if err = json.Unmarshal(raw, &d); err != nil {
 		return nil, fmt.Errorf("corrupt session data: %w", err)
 	}
-	if d.SubjectID == 0 || !realmPattern.MatchString(d.Realm) || time.Now().UnixMilli() >= d.ExpiresAt {
+	if d.SubjectID == 0 || !realmPattern.MatchString(d.Realm) || time.Now().Unix() >= d.ExpiresAt {
 		return nil, ErrInvalid
 	}
 	return &d, nil

@@ -61,7 +61,7 @@ func (s *AdminService) Login(ctx context.Context, username, password, ip, ua str
 		return nil, err
 	}
 	s.audit(ctx, a.ID, username, true, "success", ip, ua)
-	return &LoginResult{Token: token, ExpiresAt: time.UnixMilli(d.ExpiresAt).UTC(), Admin: a}, nil
+	return &LoginResult{Token: token, ExpiresAt: time.Unix(d.ExpiresAt, 0).UTC(), Admin: a}, nil
 }
 func (s *AdminService) audit(ctx context.Context, id uint64, username string, success bool, reason, ip, ua string) {
 	var adminID *uint64

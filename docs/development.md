@@ -33,6 +33,8 @@ resource 只转换已经加载的数据，不查询数据库、不触发懒加�
 
 ## 数据库
 
+数据库日期时间统一使用 UTC、秒精度 `DATETIME`；Go 模型使用 `time.Time`，GORM 自动时间在写入前截断到秒，避免数据库舍入和创建响应携带小数。API 时间使用 UTC RFC3339 秒精度。Redis 会话的 `created_at`、`expires_at` 和索引分数统一使用 Unix 秒时间戳，使用 `EXAT` / `EXPIREAT` 按同一到期时刻清理会话与索引；会话有效期不足整秒的部分截去。耗时、超时等 duration 不受此约定影响。
+
 `db.WithContext(ctx)` 传递超时/取消。service 决定事务边界：
 
 ```go

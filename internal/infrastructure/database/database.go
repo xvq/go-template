@@ -32,7 +32,7 @@ func DSN(c config.Database) string {
 	return d.FormatDSN()
 }
 func Open(c config.Database, log *slog.Logger) (*gorm.DB, error) {
-	db, err := gorm.Open(mysql.Open(DSN(c)), &gorm.Config{TranslateError: true, Logger: sqlLogger{log: log, slow: c.SlowQuery, level: glog.Warn}, NowFunc: func() time.Time { return time.Now().UTC() }})
+	db, err := gorm.Open(mysql.Open(DSN(c)), &gorm.Config{TranslateError: true, Logger: sqlLogger{log: log, slow: c.SlowQuery, level: glog.Warn}, NowFunc: func() time.Time { return time.Now().UTC().Truncate(time.Second) }})
 	if err != nil {
 		return nil, fmt.Errorf("连接 MySQL 失败: %w", err)
 	}

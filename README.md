@@ -109,6 +109,8 @@ handler 组织 `validator → service → resource`，最后由 response 输出�
 
 ## 配置、日志与设置
 
+数据库日期时间统一保存 UTC，精确到秒（`DATETIME`）；API 输出如 `2026-10-23T03:11:03Z`。
+
 配置以 `config.yaml` 为唯一运行配置来源，不自动读取 `.env` 或环境变量。支持未知字段检查、默认值和按命令验证。日志支持 `debug/info/warn/error`，输出可选 `stdout/file/both`，文件按大小轮转。日志不输出 Authorization、密码、SQL 参数或请求正文。
 
 业务设置存入 MySQL `settings` 表，以 JSON 保留类型。Redis 缓存整个已声明的设置集合，默认 1 分钟。设置定义位于 `internal/service/settings/settings.go`，默认有 `site.name` 和 `site.maintenance`；后者只是示例配置项，不自动阻止请求。
