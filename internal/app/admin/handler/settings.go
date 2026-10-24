@@ -6,14 +6,13 @@ import (
 	"github.com/xvq/go-template/internal/app/admin/validator"
 	base "github.com/xvq/go-template/internal/resource"
 	"github.com/xvq/go-template/internal/response"
-	service "github.com/xvq/go-template/internal/service/settings"
+	"github.com/xvq/go-template/internal/service/settings"
 )
 
-type Settings struct{ service *service.SettingsService }
+type Settings struct{}
 
-func NewSettings(s *service.SettingsService) *Settings { return &Settings{service: s} }
 func (h *Settings) List(c fiber.Ctx) error {
-	out, err := h.service.List(c.Context())
+	out, err := settings.List(c.Context())
 	if err != nil {
 		return err
 	}
@@ -24,7 +23,7 @@ func (h *Settings) Update(c fiber.Ctx) error {
 	if err := validator.Body(c, &req); err != nil {
 		return err
 	}
-	if err := h.service.Update(c.Context(), req.Values); err != nil {
+	if err := settings.Update(c.Context(), req.Values); err != nil {
 		return err
 	}
 	return response.OK(c, nil)

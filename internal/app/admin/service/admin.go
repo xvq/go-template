@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/xvq/go-template/internal/apperror"
-	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/infrastructure/session"
 	"github.com/xvq/go-template/internal/model"
 	"github.com/xvq/go-template/internal/resource"
@@ -18,19 +17,20 @@ import (
 )
 
 type AdminService struct {
-	db        *gorm.DB
 	sessions  *session.Store
-	policy    config.Session
-	log       *slog.Logger
 	dummyHash []byte
 }
 
-func NewAdmin(db *gorm.DB, sessions *session.Store, policy config.Session, log *slog.Logger) (*AdminService, error) {
+func NewAdmin() (*AdminService, error) {
 	h, err := bcrypt.GenerateFromPassword([]byte("not-a-real-account-password"), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
 	}
-	return &AdminService{db: db, sessions: sessions, policy: policy, log: log, dummyHash: h}, nil
+	var sessions *session.Store
+	if core.Redis != nil {
+		sessions = session.New(core.Redis, core.Config.Redis.Prefix)
+	}
+	return &AdminService{sessions: sessions, dummyHash: h}, nil
 }
 
 // LoginResult describes a business outcome, not the HTTP JSON contract.
@@ -42,7 +42,7 @@ type LoginResult struct {
 
 func (s *AdminService) Login(ctx context.Context, username, password, ip, ua string) (*LoginResult, error) {
 	var a model.Admin
-	err := s.db.WithContext(ctx).Where("username = ?", username).First(&a).Error
+	err := core.DB.WithContext(ctx).Where("username = ?", username).First(&a).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func (s *AdminService) Login(ctx context.Context, username, password, ip, ua str
 		s.audit(ctx, a.ID, username, false, "invalid_credentials", ip, ua)
 		return nil, apperror.ErrCredentials
 	}
-	token, d, err := s.sessions.Issue(ctx, "admin", a.ID, a.AuthVersion, s.policy.TokenTTL, s.policy.AllowMultipleSessions)
+	token, d, err := s.sessions.Issue(ctx, "admin", a.ID, a.AuthVersion, core.Config.Auth.Admin.TokenTTL, core.Config.Auth.Admin.AllowMultipleSessions)
 	if err != nil {
 		s.audit(ctx, a.ID, username, false, "session_unavailable", ip, ua)
 		return nil, err
@@ -69,8 +69,8 @@ func (s *AdminService) audit(ctx context.Context, id uint64, username string, su
 		adminID = &id
 	}
 	row := model.AdminLoginLog{AdminID: adminID, Username: truncate(username, 64), Success: success, Reason: reason, IP: truncate(ip, 64), UserAgent: truncate(ua, 512)}
-	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
-		s.log.Error("login audit write failed", "error_type", fmt.Sprintf("%T", err))
+	if err := core.DB.WithContext(ctx).Create(&row).Error; err != nil {
+		core.Log.Error("login audit write failed", "error_type", fmt.Sprintf("%T", err))
 	}
 }
 func truncate(v string, n int) string {
@@ -92,7 +92,7 @@ func (s *AdminService) Authenticate(ctx context.Context, token string) (*model.A
 		return nil, apperror.ErrUnauthorized
 	}
 	var a model.Admin
-	err = s.db.WithContext(ctx).First(&a, d.SubjectID).Error
+	err = core.DB.WithContext(ctx).First(&a, d.SubjectID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, apperror.ErrUnauthorized
 	}
@@ -113,19 +113,19 @@ func (s *AdminService) Create(ctx context.Context, username, name, password stri
 		return model.Admin{}, err
 	}
 	a := model.Admin{Username: username, DisplayName: name, PasswordHash: string(h), Enabled: enabled, AuthVersion: 1}
-	if err = s.db.WithContext(ctx).Create(&a).Error; err != nil {
+	if err = core.DB.WithContext(ctx).Create(&a).Error; err != nil {
 		return model.Admin{}, mapDBError(err)
 	}
 	return a, nil
 }
 func (s *AdminService) Get(ctx context.Context, id uint64) (model.Admin, error) {
 	var a model.Admin
-	err := s.db.WithContext(ctx).First(&a, id).Error
+	err := core.DB.WithContext(ctx).First(&a, id).Error
 	return a, mapDBError(err)
 }
 func (s *AdminService) List(ctx context.Context, page, size int) (resource.Page[model.Admin], error) {
 	var total int64
-	db := s.db.WithContext(ctx).Model(&model.Admin{})
+	db := core.DB.WithContext(ctx).Model(&model.Admin{})
 	if err := db.Count(&total).Error; err != nil {
 		return resource.Page[model.Admin]{}, err
 	}
@@ -144,7 +144,7 @@ type AdminUpdate struct {
 func (s *AdminService) Update(ctx context.Context, id uint64, in AdminUpdate) (model.Admin, error) {
 	var a model.Admin
 	revoke := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := core.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Lock enabled rows in stable order so concurrent disable/delete operations
 		// cannot both remove the last active administrator.
 		var active []model.Admin
@@ -185,7 +185,7 @@ func (s *AdminService) Update(ctx context.Context, id uint64, in AdminUpdate) (m
 	return a, nil
 }
 func (s *AdminService) Delete(ctx context.Context, id uint64) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := core.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var active []model.Admin
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("enabled = ?", true).Order("id").Find(&active).Error; err != nil {
 			return err
@@ -207,7 +207,7 @@ func (s *AdminService) Delete(ctx context.Context, id uint64) error {
 }
 func (s *AdminService) ChangePassword(ctx context.Context, id uint64, current, newPassword string) error {
 	var a model.Admin
-	if err := s.db.WithContext(ctx).First(&a, id).Error; err != nil {
+	if err := core.DB.WithContext(ctx).First(&a, id).Error; err != nil {
 		return mapDBError(err)
 	}
 	if bcrypt.CompareHashAndPassword([]byte(a.PasswordHash), []byte(current)) != nil {
@@ -223,7 +223,7 @@ func (s *AdminService) setPassword(ctx context.Context, id uint64, password stri
 	if err != nil {
 		return err
 	}
-	db := s.db.WithContext(ctx).Model(&model.Admin{}).Where("id = ?", id)
+	db := core.DB.WithContext(ctx).Model(&model.Admin{}).Where("id = ?", id)
 	if expected != nil {
 		db = db.Where("auth_version = ?", *expected)
 	}
@@ -245,14 +245,14 @@ func (s *AdminService) revokeAll(ctx context.Context, id uint64) {
 	// cleanup fails, old sessions cannot authenticate; TTL cleans up storage.
 	if s.sessions != nil {
 		if err := s.sessions.RevokeAll(ctx, "admin", id); err != nil {
-			s.log.Error("session cleanup failed; database already invalidated identity", "admin_id", id, "error", err)
+			core.Log.Error("session cleanup failed; database already invalidated identity", "admin_id", id, "error", err)
 		}
 	}
 }
 func (s *AdminService) LoginLogs(ctx context.Context, page, size int) (resource.Page[model.AdminLoginLog], error) {
 	var rows []model.AdminLoginLog
 	var total int64
-	db := s.db.WithContext(ctx).Model(&model.AdminLoginLog{})
+	db := core.DB.WithContext(ctx).Model(&model.AdminLoginLog{})
 	if err := db.Count(&total).Error; err != nil {
 		return resource.Page[model.AdminLoginLog]{}, err
 	}

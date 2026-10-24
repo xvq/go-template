@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"github.com/hibiken/asynq"
 	"github.com/spf13/cobra"
+	"github.com/xvq/go-template/internal/bootstrap"
 	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/infrastructure/taskqueue"
+	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/job"
 	"time"
 )
@@ -21,14 +22,14 @@ func newQueueExample(path *string) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if err = c.Validate("queue"); err != nil {
+		r, err := bootstrap.Open(cmd.Context(), c, bootstrap.Options{Name: "queue:example", Queue: true})
+		if err != nil {
 			return err
 		}
-		client := taskqueue.NewClient(c)
-		defer client.Close()
+		defer r.Close()
 		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
-		info, err := client.Enqueue(ctx, job.ExampleType, job.ExamplePayload{Message: "hello"}, asynq.ProcessIn(delay))
+		info, err := core.Queue.Enqueue(ctx, job.ExampleType, job.ExamplePayload{Message: "hello"}, asynq.ProcessIn(delay))
 		if err != nil {
 			return err
 		}

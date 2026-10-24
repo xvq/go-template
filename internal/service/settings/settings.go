@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/xvq/go-template/internal/apperror"
+	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -45,18 +45,7 @@ func SettingDefinitions() []SettingDefinition {
 	}
 }
 
-type SettingsService struct {
-	db   *gorm.DB
-	r    redis.UniversalClient
-	key  string
-	ttl  time.Duration
-	log  *slog.Logger
-	defs []SettingDefinition
-}
-
-func NewSettings(db *gorm.DB, r redis.UniversalClient, prefix string, ttl time.Duration, log *slog.Logger) *SettingsService {
-	return &SettingsService{db: db, r: r, key: prefix + ":settings", ttl: ttl, log: log, defs: SettingDefinitions()}
-}
+func cacheKey() string { return core.Config.Redis.Prefix + ":settings" }
 
 // Cache fill is guarded by a generation value. A reader that began before a
 // successful invalidation cannot repopulate the cache with stale database data.
@@ -70,24 +59,25 @@ return 0
 `)
 var invalidateSettings = redis.NewScript(`redis.call('INCR', KEYS[2]); redis.call('DEL', KEYS[1]); return 1`)
 
-func (s *SettingsService) all(ctx context.Context) (map[string]json.RawMessage, error) {
+func all(ctx context.Context) (map[string]json.RawMessage, error) {
+	defs := SettingDefinitions()
 	version := ""
-	cacheOK := s.r != nil
+	cacheOK := core.Redis != nil
 	if cacheOK {
-		raw, err := s.r.Get(ctx, s.key).Bytes()
+		raw, err := core.Redis.Get(ctx, cacheKey()).Bytes()
 		if err == nil {
 			var cached map[string]json.RawMessage
-			if json.Unmarshal(raw, &cached) == nil && s.validCache(cached) {
+			if json.Unmarshal(raw, &cached) == nil && validCache(cached, defs) {
 				return cached, nil
 			}
-			s.log.Warn("invalid settings cache; reloading")
+			core.Log.Warn("invalid settings cache; reloading")
 		}
 		if err != nil && !errors.Is(err, redis.Nil) {
 			cacheOK = false
-			s.log.Warn("settings cache unavailable; using database")
+			core.Log.Warn("settings cache unavailable; using database")
 		}
 		if cacheOK {
-			v, e := s.r.Get(ctx, s.key+":version").Result()
+			v, e := core.Redis.Get(ctx, cacheKey()+":version").Result()
 			if errors.Is(e, redis.Nil) {
 				version = "0"
 			} else if e == nil {
@@ -98,15 +88,15 @@ func (s *SettingsService) all(ctx context.Context) (map[string]json.RawMessage, 
 		}
 	}
 	var rows []model.Setting
-	if err := s.db.WithContext(ctx).Find(&rows).Error; err != nil {
+	if err := core.DB.WithContext(ctx).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	values := map[string]json.RawMessage{}
-	for _, d := range s.defs {
+	for _, d := range defs {
 		values[d.Key] = append(json.RawMessage(nil), d.Default...)
 	}
 	for _, row := range rows {
-		for _, d := range s.defs {
+		for _, d := range defs {
 			if d.Key == row.Key {
 				raw := json.RawMessage(row.Value)
 				if err := d.Validate(raw); err != nil {
@@ -122,17 +112,17 @@ func (s *SettingsService) all(ctx context.Context) (map[string]json.RawMessage, 
 		if err != nil {
 			return nil, err
 		}
-		if err = fillSettings.Run(ctx, s.r, []string{s.key, s.key + ":version"}, version, string(raw), s.ttl.Milliseconds()).Err(); err != nil {
-			s.log.Warn("settings cache fill failed")
+		if err = fillSettings.Run(ctx, core.Redis, []string{cacheKey(), cacheKey() + ":version"}, version, string(raw), core.Config.Settings.CacheTTL.Milliseconds()).Err(); err != nil {
+			core.Log.Warn("settings cache fill failed")
 		}
 	}
 	return values, nil
 }
-func (s *SettingsService) validCache(values map[string]json.RawMessage) bool {
-	if len(values) != len(s.defs) {
+func validCache(values map[string]json.RawMessage, defs []SettingDefinition) bool {
+	if len(values) != len(defs) {
 		return false
 	}
-	for _, d := range s.defs {
+	for _, d := range defs {
 		raw, ok := values[d.Key]
 		if !ok || d.Validate(raw) != nil {
 			return false
@@ -140,8 +130,8 @@ func (s *SettingsService) validCache(values map[string]json.RawMessage) bool {
 	}
 	return true
 }
-func (s *SettingsService) String(ctx context.Context, key string) (string, error) {
-	m, e := s.all(ctx)
+func String(ctx context.Context, key string) (string, error) {
+	m, e := all(ctx)
 	if e != nil {
 		return "", e
 	}
@@ -155,8 +145,8 @@ func (s *SettingsService) String(ctx context.Context, key string) (string, error
 	}
 	return out, nil
 }
-func (s *SettingsService) Bool(ctx context.Context, key string) (bool, error) {
-	m, e := s.all(ctx)
+func Bool(ctx context.Context, key string) (bool, error) {
+	m, e := all(ctx)
 	if e != nil {
 		return false, e
 	}
@@ -180,29 +170,44 @@ type Entry struct {
 	Sensitive bool
 }
 
-func (s *SettingsService) List(ctx context.Context) ([]Entry, error) {
-	values, err := s.all(ctx)
+func List(ctx context.Context) ([]Entry, error) {
+	values, err := all(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Entry, 0, len(s.defs))
-	for _, d := range s.defs {
-		v := Entry{Key: d.Key, Type: d.Type, Sensitive: d.Sensitive}
-		if !d.Sensitive {
-			v.Value = values[d.Key]
-		}
-		out = append(out, v)
-	}
-	return out, nil
+	return entries(values, SettingDefinitions()), nil
 }
-func (s *SettingsService) Update(ctx context.Context, values map[string]json.RawMessage) error {
+
+func entries(values map[string]json.RawMessage, defs []SettingDefinition) []Entry {
+	out := make([]Entry, 0, len(defs))
+	for _, d := range defs {
+		entry := Entry{Key: d.Key, Type: d.Type, Sensitive: d.Sensitive}
+		if !d.Sensitive {
+			entry.Value = values[d.Key]
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// Set validates and updates one setting, using the same invalidation as Update.
+func Set(ctx context.Context, key string, value any) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return Update(ctx, map[string]json.RawMessage{key: raw})
+}
+
+func Update(ctx context.Context, values map[string]json.RawMessage) error {
 	if len(values) == 0 {
 		return apperror.ErrInvalidSetting
 	}
+	defs := SettingDefinitions()
 	rows := make([]model.Setting, 0, len(values))
 	for key, raw := range values {
 		found := false
-		for _, d := range s.defs {
+		for _, d := range defs {
 			if d.Key == key {
 				found = true
 				if d.Validate(raw) != nil {
@@ -216,24 +221,24 @@ func (s *SettingsService) Update(ctx context.Context, values map[string]json.Raw
 		}
 		rows = append(rows, model.Setting{Key: key, Value: string(raw)})
 	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := core.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "key"}}, DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"})}).Create(&rows).Error
 	}); err != nil {
 		return err
 	}
-	if s.r != nil {
+	if core.Redis != nil {
 		// Invalidation still gets a bounded attempt when the HTTP request is canceled.
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
 		var err error
 		for i := 0; i < 3; i++ {
-			err = invalidateSettings.Run(cleanup, s.r, []string{s.key, s.key + ":version"}).Err()
+			err = invalidateSettings.Run(cleanup, core.Redis, []string{cacheKey(), cacheKey() + ":version"}).Err()
 			if err == nil {
 				break
 			}
 		}
 		if err != nil {
-			s.log.Error("settings committed but cache invalidation failed; bounded by cache TTL", "error", err)
+			core.Log.Error("settings committed but cache invalidation failed; bounded by cache TTL", "error", err)
 		}
 	}
 	return nil

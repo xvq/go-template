@@ -12,6 +12,9 @@ func newServer(path *string) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if err := c.Validate("server"); err != nil {
+			return err
+		}
 		return bootstrap.RunServer(cmd.Context(), c)
 	}}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/testutil"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
@@ -35,7 +36,8 @@ func TestHTTPAuthValidationAndRateLimit(t *testing.T) {
 	defer r.Close()
 	c := config.Defaults()
 	c.Auth.Admin.LoginLimit = 2
-	app, err := NewServer(context.Background(), &Resources{Config: c, DB: db, Redis: r, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	testutil.UseCore(t, c, db, r, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	app, err := NewServer(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

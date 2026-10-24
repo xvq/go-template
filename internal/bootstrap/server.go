@@ -12,23 +12,17 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/xvq/go-template/internal/app/admin"
-	"github.com/xvq/go-template/internal/app/admin/service"
 	"github.com/xvq/go-template/internal/app/web"
 	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/infrastructure/session"
+	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/middleware"
 	"github.com/xvq/go-template/internal/response"
-	settingsservice "github.com/xvq/go-template/internal/service/settings"
 )
 
-func NewServer(ctx context.Context, r *Resources) (*fiber.App, error) {
-	c := r.Config
-	admins, err := service.NewAdmin(r.DB, session.New(r.Redis, c.Redis.Prefix), c.Auth.Admin, r.Log)
-	if err != nil {
-		return nil, err
-	}
-	settings := settingsservice.NewSettings(r.DB, r.Redis, c.Redis.Prefix, c.Settings.CacheTTL, r.Log)
-	errors := response.ErrorHandler(r.Log, c.Database.Password, c.Redis.Password, c.Queue.Redis.Password)
+// NewServer uses the globals initialized by Open.
+func NewServer(ctx context.Context) (*fiber.App, error) {
+	c := core.Config
+	errors := response.ErrorHandler()
 	fiberConfig := fiber.Config{AppName: c.App.Name, Immutable: true, ReadTimeout: c.Server.ReadTimeout, WriteTimeout: c.Server.WriteTimeout, IdleTimeout: c.Server.IdleTimeout, BodyLimit: c.Server.BodyLimit, ErrorHandler: errors}
 	if len(c.Server.TrustedProxies) > 0 {
 		fiberConfig.TrustProxy = true
@@ -36,7 +30,7 @@ func NewServer(ctx context.Context, r *Resources) (*fiber.App, error) {
 		fiberConfig.ProxyHeader = "X-Forwarded-For"
 	}
 	app := fiber.New(fiberConfig)
-	app.Use(middleware.RequestLifecycle(ctx, c.Server.RequestTimeout, r.Log, errors))
+	app.Use(middleware.RequestLifecycle(ctx, errors))
 	app.Use(recover.New(recover.Config{PanicHandler: response.PanicHandler}))
 	if len(c.Server.CORSOrigins) > 0 {
 		app.Use(cors.New(cors.Config{AllowOrigins: c.Server.CORSOrigins, AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}, AllowHeaders: []string{"Authorization", "Content-Type"}, ExposeHeaders: []string{"X-Request-ID"}}))
@@ -45,26 +39,30 @@ func NewServer(ctx context.Context, r *Resources) (*fiber.App, error) {
 	app.Get("/health/ready", func(c fiber.Ctx) error {
 		check, cancel := context.WithTimeout(c.Context(), 2*time.Second)
 		defer cancel()
-		pool, err := r.DB.DB()
+		pool, err := core.DB.DB()
 		if err != nil {
 			return fiber.NewError(503, "服务尚未就绪")
 		}
-		if pool.PingContext(check) != nil || r.Redis.Ping(check).Err() != nil {
+		if pool.PingContext(check) != nil || core.Redis.Ping(check).Err() != nil {
 			return fiber.NewError(503, "服务尚未就绪")
 		}
 		return response.OK(c, fiber.Map{"status": "ready"})
 	})
-	admin.Register(app, admins, settings, middleware.LoginLimit(r.Redis, c.Redis.Prefix, c.Auth.Admin.LoginLimit, c.Auth.Admin.LoginWindow))
+	if err := admin.Register(app); err != nil {
+		return nil, err
+	}
 	web.Register(app)
 	return app, nil
 }
 
 func RunServer(ctx context.Context, c config.Config) error {
-	parts := []string{"server", "database", "redis", "http_client"}
-	if c.Queue.Enabled {
-		parts = append(parts, "queue")
-	}
-	r, err := Open(ctx, c, "server", parts...)
+	r, err := Open(ctx, c, Options{
+		Name:     "server",
+		Database: true,
+		Redis:    true,
+		HTTP:     true,
+		Queue:    c.Queue.Enabled,
+	})
 	if err != nil {
 		return err
 	}
@@ -72,7 +70,7 @@ func RunServer(ctx context.Context, c config.Config) error {
 	// Keep in-flight contexts alive during graceful drain; cancel after shutdown.
 	lifetime, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	app, err := NewServer(lifetime, r)
+	app, err := NewServer(lifetime)
 	if err != nil {
 		return err
 	}
@@ -81,7 +79,7 @@ func RunServer(ctx context.Context, c config.Config) error {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	r.Log.Info("HTTP server started", "address", addr)
+	core.Log.Info("HTTP server started", "address", addr)
 	return serve(ctx, app, ln, c.Server.ShutdownTimeout, cancel)
 }
 

@@ -7,8 +7,8 @@ import (
 	v "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/gofiber/fiber/v3"
 	"github.com/xvq/go-template/internal/apperror"
+	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/infrastructure/logger"
-	"log/slog"
 	"strconv"
 )
 
@@ -47,7 +47,8 @@ func ID(c fiber.Ctx) (uint64, error) {
 	}
 	return id, nil
 }
-func ErrorHandler(log *slog.Logger, secrets ...string) fiber.ErrorHandler {
+func ErrorHandler() fiber.ErrorHandler {
+	secrets := []string{core.Config.Database.Password, core.Config.Redis.Password, core.Config.Queue.Redis.Password}
 	return func(c fiber.Ctx, err error) error {
 		status, code, message := 500, "internal_error", "服务器内部错误"
 		var fields any
@@ -86,7 +87,7 @@ func ErrorHandler(log *slog.Logger, secrets ...string) fiber.ErrorHandler {
 			if errors.As(err, &panicErr) {
 				attrs = append(attrs, "stack", panicErr.stack)
 			}
-			log.ErrorContext(c.Context(), "request failed", attrs...)
+			core.Log.ErrorContext(c.Context(), "request failed", attrs...)
 		}
 		return c.Status(status).JSON(Envelope{Code: code, Message: message, Errors: fields, RequestID: c.GetRespHeader("X-Request-ID")})
 	}

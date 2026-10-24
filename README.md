@@ -95,7 +95,8 @@ cmd/main.go              程序入口
 internal/
   app/admin/             管理端 routes、handler、validator、service、resource、middleware
   app/web/               网站端路由扩展入口，不预设用户业务
-  bootstrap/             初始化、依赖组装、服务生命周期
+  bootstrap/             按命令初始化公共资源、服务生命周期
+  core/                  全局 Config、DB、Redis、Log、HTTP、Queue
   config/                YAML 配置与按命令校验
   infrastructure/        DB、Redis、日志、HTTP 客户端、会话、队列
     cli/                 根命令、服务启动、迁移与配置生成
@@ -114,7 +115,7 @@ integration/             独立测试数据库上的真实联调
 docs/                    API、扩展方法、部署说明
 ```
 
-各应用默认运行在同一个服务，管理 API 前缀为 `/api/admin`，网站端预留 `/api/web`。DB/Redis 显式传入业务服务，不依赖全局可变单例。GORM 查询能力直接保留，不强制 Repository。
+各应用默认运行在同一个服务，管理 API 前缀为 `/api/admin`，网站端预留 `/api/web`。基础设施由 bootstrap 按命令通过 `Options{Name, Database, Redis, HTTP, Queue}` 明确选择并统一初始化，业务直接使用 `core.Config/DB/Redis/Log/HTTP/Queue`，不逐层注入。运行期间不替换全局资源，退出由启动代码统一关闭。GORM 查询能力直接保留，不强制 Repository。
 
 handler 组织 `validator → service → resource`，最后由 response 输出。应用业务放在 `app/<应用>/service`；邮件、支付、存储等可复用能力放在 `internal/service/<能力>`，便于按项目挑选。每种 resource 只定义数据库数据的输出结构与单条转换，集合和分页直接复用公共助手，也支持嵌套资源。登录等组合响应由 handler 直接拼装。
 
@@ -137,7 +138,7 @@ handler 组织 `validator → service → resource`，最后由 response 输出�
 
 配置以 `config.yaml` 为唯一运行配置来源，不自动读取 `.env` 或环境变量。支持未知字段检查、默认值和按命令验证。日志支持 `debug/info/warn/error`，输出可选 `stdout/file/both`，文件按大小轮转。日志不输出 Authorization、密码、SQL 参数或请求正文。
 
-业务设置存入 MySQL `settings` 表，以 JSON 保留类型。Redis 缓存整个已声明的设置集合，默认 1 分钟。设置定义位于 `internal/service/settings/settings.go`，默认有 `site.name` 和 `site.maintenance`；后者只是示例配置项，不自动阻止请求。
+业务设置存入 MySQL `settings` 表，以 JSON 保留类型。Redis 缓存整个已声明的设置集合，默认 1 分钟。设置通过无请求状态的包函数 `settings.String/Bool/Set/Update/List` 调用，无需创建或注入服务实例。设置定义位于 `internal/service/settings/settings.go`，默认有 `site.name` 和 `site.maintenance`；后者只是示例配置项，不自动阻止请求。
 
 读取缓存失败时回源 MySQL。修改先提交数据库，再清除缓存并更新缓存版本；过期读不能在成功失效后重新写入旧缓存。失效失败会有短暂重试和错误日志，以 TTL 为最终上限。当前模型接受短暂最终一致性。敏感定义不向列表 API 返回值；不要把数据库/Redis 凭证放入业务设置。
 
@@ -176,7 +177,7 @@ go run ./scripts/build.go -os linux -arch amd64
 
 运行生成的程序加 version 可查看版本、完整提交号、UTC 构建时间和 Go 版本。脚本从当前项目 Git 历史读取 v 开头的版本标签：标签处为 v0.1.0，之后为 v0.1.0-3-gabcdef0；无标签为 dev-提交号。存在未提交修改（含未跟踪文件，不含忽略文件）时追加 -dirty。无 Git 信息的源码构建显示 dev / unknown；普通 go run ./cmd version 也使用开发默认值。脚本自动读取模块名。新项目可通过 `git init` 建立自己的版本历史。CI 获取完整历史并使用同一脚本构建，但不自动发布。
 
-单位/组件测试使用 miniredis 与 sqlmock，不连接业务数据库。真实迁移、CRUD、多表关联和队列消费使用单独的集成测试。启动 Compose 后（PowerShell）：
+单位/组件测试使用 miniredis 与 sqlmock，不连接业务数据库。使用全局资源的测试按顺序执行，安装独立测试连接并在结束后恢复，不使用 `t.Parallel()`。真实迁移、CRUD、多表关联和队列消费使用单独的集成测试。启动 Compose 后（PowerShell）：
 
 ```powershell
 $env:GOTEMPLATE_TEST_MYSQL_ADDRESS='127.0.0.1:3306'

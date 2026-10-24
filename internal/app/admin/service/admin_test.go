@@ -9,6 +9,7 @@ import (
 	"github.com/xvq/go-template/internal/apperror"
 	"github.com/xvq/go-template/internal/config"
 	"github.com/xvq/go-template/internal/infrastructure/session"
+	"github.com/xvq/go-template/internal/testutil"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -39,7 +40,10 @@ func TestLoginAndAccountVersionInvalidation(t *testing.T) {
 	r := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer r.Close()
 	sessions := session.New(r, "test")
-	s, err := NewAdmin(db, sessions, config.Defaults().Auth.Admin, testLogger())
+	c := config.Defaults()
+	c.Redis.Prefix = "test"
+	testutil.UseCore(t, c, db, r, testLogger())
+	s, err := NewAdmin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +80,8 @@ func TestLoginAndAccountVersionInvalidation(t *testing.T) {
 }
 func TestMissingAccountAuditAndDatabaseFailure(t *testing.T) {
 	db, m := mockDB(t)
-	s, err := NewAdmin(db, nil, config.Defaults().Auth.Admin, testLogger())
+	testutil.UseCore(t, config.Defaults(), db, nil, testLogger())
+	s, err := NewAdmin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +102,8 @@ func TestMissingAccountAuditAndDatabaseFailure(t *testing.T) {
 }
 func TestLastAdminDeleteRollsBack(t *testing.T) {
 	db, m := mockDB(t)
-	s, err := NewAdmin(db, nil, config.Defaults().Auth.Admin, testLogger())
+	testutil.UseCore(t, config.Defaults(), db, nil, testLogger())
+	s, err := NewAdmin()
 	if err != nil {
 		t.Fatal(err)
 	}

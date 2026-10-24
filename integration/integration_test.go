@@ -27,9 +27,9 @@ import (
 	"github.com/xvq/go-template/internal/config"
 	"github.com/xvq/go-template/internal/infrastructure/cli"
 	"github.com/xvq/go-template/internal/infrastructure/database"
-	"github.com/xvq/go-template/internal/infrastructure/session"
 	"github.com/xvq/go-template/internal/infrastructure/taskqueue"
 	settingsservice "github.com/xvq/go-template/internal/service/settings"
+	"github.com/xvq/go-template/internal/testutil"
 	"gorm.io/gorm"
 )
 
@@ -115,6 +115,7 @@ func environment(t *testing.T) (config.Config, *gorm.DB, *redis.Client, *slog.Lo
 		}
 		r.Close()
 	})
+	testutil.UseCore(t, c, db, r, log)
 	return c, db, r, log
 }
 
@@ -142,9 +143,9 @@ func call(t *testing.T, app *fiber.App, method, path, token, body string, want i
 	return out
 }
 func TestAdminAPISettingsAndMigrations(t *testing.T) {
-	c, db, r, log := environment(t)
+	c, _, _, _ := environment(t)
 	ctx := context.Background()
-	admins, err := service.NewAdmin(db, session.New(r, c.Redis.Prefix), c.Auth.Admin, log)
+	admins, err := service.NewAdmin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func TestAdminAPISettingsAndMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := bootstrap.NewServer(ctx, &bootstrap.Resources{Config: c, DB: db, Redis: r, Log: log})
+	app, err := bootstrap.NewServer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,8 +172,7 @@ func TestAdminAPISettingsAndMigrations(t *testing.T) {
 	call(t, app, "PATCH", fmt.Sprintf("/api/admin/admins/%d", id), token, `{"display_name":"","enabled":false}`, 200)
 	call(t, app, "GET", "/api/admin/settings", token, "", 200)
 	call(t, app, "PATCH", "/api/admin/settings", token, `{"values":{"site.name":"Integration","site.maintenance":true}}`, 200)
-	settings := settingsservice.NewSettings(db, r, c.Redis.Prefix, c.Settings.CacheTTL, log)
-	if name, err := settings.String(ctx, "site.name"); err != nil || name != "Integration" {
+	if name, err := settingsservice.String(ctx, "site.name"); err != nil || name != "Integration" {
 		t.Fatal(name, err)
 	}
 	call(t, app, "PATCH", "/api/admin/settings", token, `{"values":{"site.maintenance":"true"}}`, 422)

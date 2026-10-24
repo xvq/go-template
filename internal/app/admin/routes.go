@@ -5,14 +5,18 @@ import (
 	"github.com/xvq/go-template/internal/app/admin/handler"
 	"github.com/xvq/go-template/internal/app/admin/middleware"
 	"github.com/xvq/go-template/internal/app/admin/service"
-	settingsservice "github.com/xvq/go-template/internal/service/settings"
+	commonmiddleware "github.com/xvq/go-template/internal/middleware"
 )
 
-func Register(app *fiber.App, admins *service.AdminService, settings *settingsservice.SettingsService, loginLimit fiber.Handler) {
+func Register(app *fiber.App) error {
+	admins, err := service.NewAdmin()
+	if err != nil {
+		return err
+	}
 	h := handler.NewAdmin(admins)
-	s := handler.NewSettings(settings)
+	s := &handler.Settings{}
 	api := app.Group("/api/admin")
-	api.Post("/login", loginLimit, h.Login)
+	api.Post("/login", commonmiddleware.LoginLimit(), h.Login)
 	api.Use(middleware.Auth(admins))
 	api.Post("/logout", h.Logout)
 	api.Get("/me", h.Me)
@@ -26,4 +30,5 @@ func Register(app *fiber.App, admins *service.AdminService, settings *settingsse
 	api.Get("/login-logs", h.LoginLogs)
 	api.Get("/settings", s.List)
 	api.Patch("/settings", s.Update)
+	return nil
 }

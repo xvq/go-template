@@ -48,3 +48,22 @@ func TestInitDoesNotOverwriteAndQueueDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCommandConfigurationValidatedBeforeResources(t *testing.T) {
+	for _, tc := range []struct{ command, config, want string }{
+		{"server", "server:\n  port: -1\n", "server 配置无效"},
+		{"schedule", "schedule:\n  timezone: invalid/timezone\n", "schedule.timezone 无效"},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.config), 0600); err != nil {
+				t.Fatal(err)
+			}
+			root := NewRoot()
+			root.SetArgs([]string{"-c", path, tc.command})
+			if err := root.Execute(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want command configuration error %q, got %v", tc.want, err)
+			}
+		})
+	}
+}

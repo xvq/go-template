@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/xvq/go-template/internal/bootstrap"
 	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/infrastructure/taskqueue"
 	"github.com/xvq/go-template/internal/job"
 )
@@ -14,13 +15,13 @@ func newQueueWork(path *string) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		r, err := bootstrap.Open(cmd.Context(), c, "queue-work", "queue")
+		r, err := bootstrap.Open(cmd.Context(), c, bootstrap.Options{Name: "queue:work", Queue: true})
 		if err != nil {
 			return err
 		}
 		defer r.Close()
-		srv := taskqueue.NewServer(c, r.Log)
-		if err = srv.Start(job.Register(r.Log)); err != nil {
+		srv := taskqueue.NewServer(c, core.Log)
+		if err = srv.Start(job.Register()); err != nil {
 			return err
 		}
 		<-cmd.Context().Done()

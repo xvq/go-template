@@ -34,12 +34,12 @@ func newAdminCreate(path *string) *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 		defer cancel()
-		r, err := bootstrap.Open(ctx, c, "command", "database")
+		r, err := bootstrap.Open(ctx, c, bootstrap.Options{Name: "admin:create", Database: true})
 		if err != nil {
 			return err
 		}
 		defer r.Close()
-		admins, err := service.NewAdmin(r.DB, nil, c.Auth.Admin, r.Log)
+		admins, err := service.NewAdmin()
 		if err != nil {
 			return err
 		}

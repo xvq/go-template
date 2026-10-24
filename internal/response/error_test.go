@@ -13,6 +13,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/xvq/go-template/internal/apperror"
+	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/testutil"
 )
 
 func TestErrorDiagnosticsAndPanicRecovery(t *testing.T) {
@@ -32,7 +34,10 @@ func TestErrorDiagnosticsAndPanicRecovery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var logs bytes.Buffer
 			log := slog.New(slog.NewJSONHandler(&logs, nil))
-			app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler(log, "known-secret")})
+			c := config.Defaults()
+			c.Database.Password = "known-secret"
+			testutil.UseCore(t, c, nil, nil, log)
+			app := fiber.New(fiber.Config{ErrorHandler: ErrorHandler()})
 			app.Use(recover.New(recover.Config{PanicHandler: PanicHandler}))
 			app.Get("/fail", func(c fiber.Ctx) error {
 				c.Set("X-Request-ID", "test-request")

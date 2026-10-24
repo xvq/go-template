@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/hibiken/asynq"
-	"log/slog"
+	"github.com/xvq/go-template/internal/core"
 	"time"
 )
 
@@ -16,7 +16,7 @@ type ExamplePayload struct {
 }
 
 // Register is the only task registration entry point. No implicit init hooks.
-func Register(log *slog.Logger) *asynq.ServeMux {
+func Register() *asynq.ServeMux {
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(ExampleType, func(ctx context.Context, t *asynq.Task) error {
 		var payload ExamplePayload
@@ -27,7 +27,7 @@ func Register(log *slog.Logger) *asynq.ServeMux {
 			return err
 		}
 		// Log metadata, not arbitrary payloads (which may contain secrets).
-		log.InfoContext(ctx, "example task completed", "message_length", len(payload.Message), "completed_at", time.Now().UTC())
+		core.Log.InfoContext(ctx, "example task completed", "message_length", len(payload.Message), "completed_at", time.Now().UTC())
 		return nil
 	})
 	return mux
