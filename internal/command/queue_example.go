@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"github.com/hibiken/asynq"
 	"github.com/spf13/cobra"
-	"github.com/xvq/go-template/internal/bootstrap"
-	"github.com/xvq/go-template/internal/config"
 	"github.com/xvq/go-template/internal/core"
+	"github.com/xvq/go-template/internal/core/bootstrap"
+	"github.com/xvq/go-template/internal/core/config"
 	"github.com/xvq/go-template/internal/job"
 	"time"
 )

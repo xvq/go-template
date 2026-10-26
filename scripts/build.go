@@ -76,7 +76,7 @@ func run() error {
 	if err := os.MkdirAll(filepath.Dir(*destination), 0755); err != nil {
 		return err
 	}
-	pkg := module + "/internal/infrastructure/cli"
+	pkg := module + "/internal/core/infrastructure/cli"
 	stamp := time.Now().UTC().Format(time.RFC3339)
 	flags := fmt.Sprintf("-s -w -X %s.version=%s -X %s.commit=%s -X %s.buildTime=%s", pkg, version, pkg, commit, pkg, stamp)
 	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-ldflags", flags, "-o", *destination, "./cmd")

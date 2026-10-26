@@ -1,7 +1,7 @@
 package schedule
 
 import (
-	"github.com/xvq/go-template/internal/infrastructure/scheduler"
+	"github.com/xvq/go-template/internal/core/infrastructure/scheduler"
 )
 
 // Register lists scheduled tasks explicitly. Define each task in its own file

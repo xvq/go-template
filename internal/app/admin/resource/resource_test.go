@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	"github.com/xvq/go-template/internal/model"
+	"github.com/xvq/go-template/internal/util/query"
 
-	base "github.com/xvq/go-template/internal/resource"
 	"github.com/xvq/go-template/internal/service/settings"
 )
 
 func TestAdminPublicFields(t *testing.T) {
-	result := AdminItem(model.Admin{ID: 7, Username: "admin", PasswordHash: "secret", AuthVersion: 9})
+	result := AdminResource.Item(&model.Admin{ID: 7, Username: "admin", PasswordHash: "secret", AuthVersion: 9})
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -36,14 +36,14 @@ func TestAdminPublicFields(t *testing.T) {
 }
 
 func TestEmptyPageKeepsTotal(t *testing.T) {
-	raw, err := json.Marshal(base.Paginate(base.Page[model.Admin]{Total: 3, Page: 2, PageSize: 20}, AdminItem))
+	raw, err := json.Marshal(AdminResource.Page(query.NewPage[model.Admin](nil, 3, 2, 20)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != `{"items":[],"total":3,"page":2,"page_size":20}` {
+	if string(raw) != `{"data":[],"pagination":{"current_page":2,"last_page":1,"per_page":20,"total":3,"count":0}}` {
 		t.Fatalf("unexpected page: %s", raw)
 	}
-	if items := base.Collection(nil, AdminItem); items == nil {
+	if items := AdminResource.Collection(nil); items == nil {
 		t.Fatal("empty collection must be an array")
 	}
 }
@@ -53,7 +53,7 @@ func TestSettingsSensitiveValueAndJSONTypes(t *testing.T) {
 		{Key: "secret", Type: "string", Sensitive: true, Value: json.RawMessage(`"private"`)},
 		{Key: "enabled", Type: "boolean", Value: json.RawMessage(`false`)},
 	}
-	out := base.Collection(entries, SettingItem)
+	out := SettingResource.Collection(entries)
 	raw, err := json.Marshal(out)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestSettingsSensitiveValueAndJSONTypes(t *testing.T) {
 }
 
 func TestLoginLogUnknownAdmin(t *testing.T) {
-	raw, err := json.Marshal(LoginLogItem(model.AdminLoginLog{Username: "unknown"}))
+	raw, err := json.Marshal(AdminLoginLogResource.Item(&model.AdminLoginLog{Username: "unknown"}))
 	if err != nil {
 		t.Fatal(err)
 	}

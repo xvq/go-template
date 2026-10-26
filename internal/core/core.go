@@ -8,8 +8,9 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/redis/go-redis/v9"
-	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/infrastructure/taskqueue"
+	"github.com/xvq/go-template/internal/core/config"
+	"github.com/xvq/go-template/internal/core/infrastructure/session"
+	"github.com/xvq/go-template/internal/core/infrastructure/taskqueue"
 	"gorm.io/gorm"
 )
 
@@ -17,7 +18,9 @@ var (
 	Config config.Config
 	DB     *gorm.DB
 	Redis  *redis.Client
-	Log    *slog.Logger
-	HTTP   *resty.Client
-	Queue  *taskqueue.Client
+	// Session shares Redis and is available only when Redis is initialized.
+	Session *session.Store
+	Log     *slog.Logger
+	HTTP    *resty.Client
+	Queue   *taskqueue.Client
 )

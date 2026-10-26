@@ -8,7 +8,7 @@ import (
 	"syscall"
 	_ "time/tzdata"
 
-	"github.com/xvq/go-template/internal/infrastructure/cli"
+	"github.com/xvq/go-template/internal/core/infrastructure/cli"
 )
 
 func main() {

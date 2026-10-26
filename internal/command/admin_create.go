@@ -5,10 +5,11 @@ import (
 	"context"
 	"fmt"
 	"github.com/spf13/cobra"
+	adminrequest "github.com/xvq/go-template/internal/app/admin/request"
 	"github.com/xvq/go-template/internal/app/admin/service"
-	"github.com/xvq/go-template/internal/app/admin/validator"
-	"github.com/xvq/go-template/internal/bootstrap"
-	"github.com/xvq/go-template/internal/config"
+	"github.com/xvq/go-template/internal/core/bootstrap"
+	"github.com/xvq/go-template/internal/core/config"
+	"github.com/xvq/go-template/internal/core/infrastructure/validator"
 	"golang.org/x/term"
 	"io"
 	"os"
@@ -20,12 +21,15 @@ func newAdminCreate(path *string) *cobra.Command {
 	var username, name string
 	var stdin bool
 	cmd := &cobra.Command{Use: "admin:create", Short: "创建管理员，交互输入密码或使用 --password-stdin", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validator.Init(); err != nil {
+			return err
+		}
 		password, err := readPassword(cmd, stdin)
 		if err != nil {
 			return err
 		}
-		req := validator.CreateAdmin{Username: username, DisplayName: name, Password: password}
-		if err = req.Validate(); err != nil {
+		req := adminrequest.CreateAdmin{Username: username, DisplayName: name, Password: password}
+		if err = validator.Struct(&req); err != nil {
 			return err
 		}
 		c, err := config.Load(*path)

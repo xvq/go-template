@@ -6,8 +6,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/testutil"
+	"github.com/xvq/go-template/internal/core/config"
+	"github.com/xvq/go-template/internal/core/testutil"
 	"testing"
 )
 

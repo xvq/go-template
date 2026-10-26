@@ -4,18 +4,20 @@ import (
 	"context"
 	"errors"
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alexedwards/argon2id"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/xvq/go-template/internal/apperror"
-	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/infrastructure/session"
-	"github.com/xvq/go-template/internal/testutil"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/xvq/go-template/internal/core"
+	"github.com/xvq/go-template/internal/core/config"
+	passwordhash "github.com/xvq/go-template/internal/core/infrastructure/password"
+	"github.com/xvq/go-template/internal/core/testutil"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,7 +41,6 @@ func TestLoginAndAccountVersionInvalidation(t *testing.T) {
 	mr := miniredis.RunT(t)
 	r := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer r.Close()
-	sessions := session.New(r, "test")
 	c := config.Defaults()
 	c.Redis.Prefix = "test"
 	testutil.UseCore(t, c, db, r, testLogger())
@@ -47,12 +48,16 @@ func TestLoginAndAccountVersionInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, _ := bcrypt.GenerateFromPassword([]byte("secure-password"), bcrypt.MinCost)
-	m.ExpectQuery("SELECT .*admins").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "password_hash", "enabled", "auth_version"}).AddRow(1, "admin", string(hash), true, 1))
+	password := strings.Repeat("中", 30) // 90 bytes: must not be truncated or rejected.
+	hash, err := argon2id.CreateHash(password, &passwordhash.Params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.ExpectQuery("SELECT .*admins").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "password_hash", "enabled", "auth_version"}).AddRow(1, "admin", hash, true, 1))
 	m.ExpectBegin()
 	m.ExpectExec("INSERT INTO .*admin_login_logs").WillReturnResult(sqlmock.NewResult(1, 1))
 	m.ExpectCommit()
-	result, err := s.Login(context.Background(), "admin", "secure-password", "127.0.0.1", "test")
+	result, err := s.Login(context.Background(), "admin", password, "127.0.0.1", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +72,7 @@ func TestLoginAndAccountVersionInvalidation(t *testing.T) {
 	if _, err = s.Authenticate(context.Background(), result.Token); !errors.Is(err, apperror.ErrUnauthorized) {
 		t.Fatalf("disabled account authenticated: %v", err)
 	}
-	web, _, err := sessions.Issue(context.Background(), "web", 1, 1, time.Hour, true)
+	web, _, err := core.Session.Issue(context.Background(), "web", 1, 1, time.Hour, true)
 	if err != nil {
 		t.Fatal(err)
 	}

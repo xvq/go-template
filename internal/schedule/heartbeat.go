@@ -3,7 +3,7 @@ package schedule
 import (
 	"context"
 	"github.com/xvq/go-template/internal/core"
-	"github.com/xvq/go-template/internal/infrastructure/scheduler"
+	"github.com/xvq/go-template/internal/core/infrastructure/scheduler"
 	"time"
 )
 

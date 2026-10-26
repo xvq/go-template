@@ -23,13 +23,13 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"github.com/xvq/go-template/internal/app/admin/service"
-	"github.com/xvq/go-template/internal/bootstrap"
-	"github.com/xvq/go-template/internal/config"
-	"github.com/xvq/go-template/internal/infrastructure/cli"
-	"github.com/xvq/go-template/internal/infrastructure/database"
-	"github.com/xvq/go-template/internal/infrastructure/taskqueue"
+	"github.com/xvq/go-template/internal/core/bootstrap"
+	"github.com/xvq/go-template/internal/core/config"
+	"github.com/xvq/go-template/internal/core/infrastructure/cli"
+	"github.com/xvq/go-template/internal/core/infrastructure/database"
+	"github.com/xvq/go-template/internal/core/infrastructure/taskqueue"
+	"github.com/xvq/go-template/internal/core/testutil"
 	settingsservice "github.com/xvq/go-template/internal/service/settings"
-	"github.com/xvq/go-template/internal/testutil"
 	"gorm.io/gorm"
 )
 
@@ -168,8 +168,18 @@ func TestAdminAPISettingsAndMigrations(t *testing.T) {
 	}
 	created := call(t, app, "POST", "/api/admin/admins", token, `{"username":"second","password":"secure-password","display_name":"第二个管理员"}`, 201)
 	id := uint64(created["data"].(map[string]any)["id"].(float64))
+	listed := call(t, app, "GET", "/api/admin/admins?page=1&page_size=1", token, "", 200)["data"].(map[string]any)
+	meta := listed["pagination"].(map[string]any)
+	if meta["total"] != float64(2) || meta["per_page"] != float64(1) || meta["last_page"] != float64(2) || meta["current_page"] != float64(1) || meta["count"] != float64(1) || len(listed["data"].([]any)) != 1 {
+		t.Fatalf("unexpected admin pagination: %v", listed)
+	}
+	empty := call(t, app, "GET", "/api/admin/admins?page=3&page_size=1", token, "", 200)["data"].(map[string]any)
+	meta = empty["pagination"].(map[string]any)
+	if meta["total"] != float64(2) || meta["last_page"] != float64(2) || meta["current_page"] != float64(3) || meta["count"] != float64(0) || len(empty["data"].([]any)) != 0 {
+		t.Fatalf("out-of-range admin page lost total: %v", empty)
+	}
 	call(t, app, "POST", "/api/admin/admins", token, `{"username":"second","password":"secure-password"}`, 409)
-	call(t, app, "PATCH", fmt.Sprintf("/api/admin/admins/%d", id), token, `{"display_name":"","enabled":false}`, 200)
+	call(t, app, "PATCH", fmt.Sprintf("/api/admin/admins/%d", id), token, `{"display_name":"第二个管理员","enabled":false}`, 200)
 	call(t, app, "GET", "/api/admin/settings", token, "", 200)
 	call(t, app, "PATCH", "/api/admin/settings", token, `{"values":{"site.name":"Integration","site.maintenance":true}}`, 200)
 	if name, err := settingsservice.String(ctx, "site.name"); err != nil || name != "Integration" {

@@ -1,11 +1,12 @@
 package resource
 
 import (
+	base "github.com/xvq/go-template/internal/core/resource"
 	"github.com/xvq/go-template/internal/model"
 	"time"
 )
 
-type Admin struct {
+type admin struct {
 	ID          uint64    `json:"id"`
 	Username    string    `json:"username"`
 	DisplayName string    `json:"display_name"`
@@ -14,7 +15,11 @@ type Admin struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// AdminItem is the only field-selection function; collections/pages reuse it.
-func AdminItem(a model.Admin) Admin {
-	return Admin{ID: a.ID, Username: a.Username, DisplayName: a.DisplayName, Enabled: a.Enabled, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
+// AdminResource maps rows from admins. Treat this shared resource as read-only.
+var AdminResource = base.New(adminResource{}.transform)
+
+type adminResource struct{}
+
+func (adminResource) transform(a model.Admin) admin {
+	return admin{ID: a.ID, Username: a.Username, DisplayName: a.DisplayName, Enabled: a.Enabled, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
 }

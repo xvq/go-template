@@ -56,7 +56,7 @@ go run ./cmd admin:create --username admin --name 管理员
 go run ./cmd server
 ```
 
-创建管理员时交互输入密码，不回显，也不通过命令行参数传密码。脚本可使用 `--password-stdin`。密码长度为 **12～72 字节**（bcrypt 的上限按字节计算）。没有默认管理员。
+创建管理员时交互输入密码，不回显，也不通过命令行参数传密码。脚本可使用 `--password-stdin`。密码长度为 **6～30 个 Unicode 字符**，不限制内容、不自动裁剪空格。没有默认管理员。
 
 ```sh
 curl http://127.0.0.1:8080/health/live
@@ -93,19 +93,25 @@ app --help
 ```text
 cmd/main.go              程序入口
 internal/
-  app/admin/             管理端 routes、handler、validator、service、resource、middleware
+  app/admin/             管理端 routes、handler、request、service、resource、middleware
   app/web/               网站端路由扩展入口，不预设用户业务
-  bootstrap/             按命令初始化公共资源、服务生命周期
-  core/                  全局 Config、DB、Redis、Log、HTTP、Queue
-  config/                YAML 配置与按命令校验
-  infrastructure/        DB、Redis、日志、HTTP 客户端、会话、队列
-    cli/                 根命令、服务启动、迁移与配置生成
-    scheduler/           定时任务类型与调度运行机制
+  core/                  框架层与全局资源入口
+    core.go              全局 Config、DB、Redis、Session、Log、HTTP、Queue
+    bootstrap/           按命令初始化公共资源、服务生命周期
+    config/              YAML 配置与按命令校验
+    infrastructure/      DB、Redis、日志、HTTP 客户端、会话、队列
+      cli/               根命令、服务启动、迁移与配置生成
+      scheduler/         定时任务类型与调度运行机制
+    request/             路由绑定校验包装、ID 与分页参数解析
+    response/            响应信封、错误转换、流式输出
+    resource/            单个可选模型、集合、分页的通用输出转换
+    testutil/            全局资源测试辅助
   middleware/            请求上下文、访问日志、登录限流
-  response/              响应信封、错误转换、分页参数解析、流式输出
-  resource/              分页数据结构，单个可选模型、集合、分页的通用转换
   apperror/              公共错误定义
   service/settings/      系统设置能力；其他公共能力各建子目录
+  util/
+    str/                 无业务依赖的字符串工具
+    query/               GORM 分页查询辅助与 Page[T] 查询结果
   model/                 GORM 数据模型与关联
   command/               业务命令及显式注册
   schedule/              具体定时任务及显式注册
@@ -115,17 +121,18 @@ integration/             独立测试数据库上的真实联调
 docs/                    API、扩展方法、部署说明
 ```
 
-各应用默认运行在同一个服务，管理 API 前缀为 `/api/admin`，网站端预留 `/api/web`。基础设施由 bootstrap 按命令通过 `Options{Name, Database, Redis, HTTP, Queue}` 明确选择并统一初始化，业务直接使用 `core.Config/DB/Redis/Log/HTTP/Queue`，不逐层注入。运行期间不替换全局资源，退出由启动代码统一关闭。GORM 查询能力直接保留，不强制 Repository。
+各应用默认运行在同一个服务，管理 API 前缀为 `/api/admin`，网站端预留 `/api/web`。基础设施由 bootstrap 按命令通过 `Options{Name, Database, Redis, HTTP, Queue}` 明确选择并统一初始化，业务直接使用 `core.Config/DB/Redis/Session/Log/HTTP/Queue`，不逐层注入。运行期间不替换全局资源，退出由启动代码统一关闭。GORM 查询能力直接保留，不强制 Repository。
 
-handler 组织 `validator → service → resource`，最后由 response 输出。应用业务放在 `app/<应用>/service`；邮件、支付、存储等可复用能力放在 `internal/service/<能力>`，便于按项目挑选。每种 resource 只定义数据库数据的输出结构与单条转换，集合和分页直接复用公共助手，也支持嵌套资源。登录等组合响应由 handler 直接拼装。
+管理端路由通过 `request.JSON` 完成 JSON 参数绑定和 go-playground/validator 校验（公共包另提供 Body/Form/Query 用于其他请求来源），再调用 handler；handler 组织 `service → resource`，最后由 response 输出。应用业务放在 `app/<应用>/service`；邮件、支付、存储等可复用能力放在 `internal/service/<能力>`，便于按项目挑选。每种 resource 定义输出结构、私有 transform 方法和公共入口（如 AdminResource、AdminLoginLogResource），统一通过 .Item/.Collection/.Page 转换，也支持嵌套资源。登录等组合响应由 handler 直接拼装。
 
 ## 管理员与认证
 
 - 管理员 CRUD、启用/禁用、重置密码、本人修改密码、登录、退出、当前身份。
 - 所有管理员权限相同，没有角色/菜单/权限体系。
-- 用户名创建后不可修改；显示名称可以清空。
+- 用户名创建后不可修改；更新管理员提交完整表单，显示名称不能为空，启用状态必填。
 - 不允许删除/禁用最后一个启用的管理员，避免误操作锁死管理端。
-- 密码使用 bcrypt；登录成功/失败记录账号、时间、IP、User-Agent 和原因，不记录密码或 Token。
+- 密码使用 Argon2id；登录成功/失败记录账号、时间、IP、User-Agent 和原因，不记录密码或 Token。
+- `core.Session` 随公共 Redis 初始化，复用同一连接池，无需在业务服务中创建。
 - 每个会话使用独立 Redis 键和 TTL，Redis 只存 Token 哈希标识。
 - `auth.admin.allow_multiple_sessions: false` 表示新登录撤销旧会话；通过 Lua 原子执行，并发下也只保留一个。
 - 多会话切换为单会话后，在下一次成功登录时清理旧会话。配置修改需重启。
