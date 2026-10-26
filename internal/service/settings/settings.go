@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -16,46 +15,18 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-type SettingDefinition struct {
-	Key       string
-	Type      string
-	Default   json.RawMessage
-	Sensitive bool
-	Validate  func(json.RawMessage) error
-}
-
-// Definitions are code-owned. Add business settings here, not through arbitrary
-// API keys. Do not put database/Redis credentials into settings.
-func SettingDefinitions() []SettingDefinition {
-	return []SettingDefinition{
-		{Key: "site.name", Type: "string", Default: json.RawMessage(`"Go Template"`), Validate: func(raw json.RawMessage) error {
-			var v string
-			if json.Unmarshal(raw, &v) != nil || strings.TrimSpace(v) == "" || len([]rune(v)) > 100 {
-				return apperror.ErrInvalidSetting
-			}
-			return nil
-		}},
-		{Key: "site.maintenance", Type: "boolean", Default: json.RawMessage(`false`), Validate: func(raw json.RawMessage) error {
-			var v *bool
-			if json.Unmarshal(raw, &v) != nil || v == nil {
-				return apperror.ErrInvalidSetting
-			}
-			return nil
-		}},
-	}
-}
-
-func cacheKey() string { return core.Config.Redis.Prefix + ":settings" }
+const cacheKey = "settings"
 
 // Cache fill is guarded by a generation value. A reader that began before a
 // successful invalidation cannot repopulate the cache with stale database data.
 var fillSettings = redis.NewScript(`
 local version = redis.call('GET', KEYS[2]) or '0'
-if version == ARGV[1] then
- redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
- return 1
+if version ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[1])
+for i = 2, #ARGV, 2 do
+ redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
 end
-return 0
+return 1
 `)
 var invalidateSettings = redis.NewScript(`redis.call('INCR', KEYS[2]); redis.call('DEL', KEYS[1]); return 1`)
 
@@ -64,20 +35,23 @@ func all(ctx context.Context) (map[string]json.RawMessage, error) {
 	version := ""
 	cacheOK := core.Redis != nil
 	if cacheOK {
-		raw, err := core.Redis.Get(ctx, cacheKey()).Bytes()
-		if err == nil {
-			var cached map[string]json.RawMessage
-			if json.Unmarshal(raw, &cached) == nil && validCache(cached, defs) {
+		fields, err := core.Redis.HGetAll(ctx, cacheKey).Result()
+		if err == nil && len(fields) > 0 {
+			cached := make(map[string]json.RawMessage, len(fields))
+			for key, value := range fields {
+				cached[key] = json.RawMessage(value)
+			}
+			if validCache(cached, defs) {
 				return cached, nil
 			}
 			core.Log.Warn("invalid settings cache; reloading")
 		}
-		if err != nil && !errors.Is(err, redis.Nil) {
+		if err != nil {
 			cacheOK = false
 			core.Log.Warn("settings cache unavailable; using database")
 		}
 		if cacheOK {
-			v, e := core.Redis.Get(ctx, cacheKey()+":version").Result()
+			v, e := core.Redis.Get(ctx, cacheKey+":version").Result()
 			if errors.Is(e, redis.Nil) {
 				version = "0"
 			} else if e == nil {
@@ -93,13 +67,16 @@ func all(ctx context.Context) (map[string]json.RawMessage, error) {
 	}
 	values := map[string]json.RawMessage{}
 	for _, d := range defs {
+		if d.validate(d.Default) != nil {
+			return nil, fmt.Errorf("invalid default setting %s", d.Key)
+		}
 		values[d.Key] = append(json.RawMessage(nil), d.Default...)
 	}
 	for _, row := range rows {
 		for _, d := range defs {
 			if d.Key == row.Key {
 				raw := json.RawMessage(row.Value)
-				if err := d.Validate(raw); err != nil {
+				if err := d.validate(raw); err != nil {
 					return nil, fmt.Errorf("invalid stored setting %s", row.Key)
 				}
 				values[row.Key] = raw
@@ -108,14 +85,15 @@ func all(ctx context.Context) (map[string]json.RawMessage, error) {
 		}
 	}
 	if cacheOK {
-		raw, err := json.Marshal(values)
-		if err != nil {
-			return nil, err
+		args := []any{version}
+		for key, value := range values {
+			args = append(args, key, string(value))
 		}
-		if err = fillSettings.Run(ctx, core.Redis, []string{cacheKey(), cacheKey() + ":version"}, version, string(raw), core.Config.Settings.CacheTTL.Milliseconds()).Err(); err != nil {
+		if err := fillSettings.Run(ctx, core.Redis, []string{cacheKey, cacheKey + ":version"}, args...).Err(); err != nil {
 			core.Log.Warn("settings cache fill failed")
 		}
 	}
+
 	return values, nil
 }
 func validCache(values map[string]json.RawMessage, defs []SettingDefinition) bool {
@@ -124,50 +102,41 @@ func validCache(values map[string]json.RawMessage, defs []SettingDefinition) boo
 	}
 	for _, d := range defs {
 		raw, ok := values[d.Key]
-		if !ok || d.Validate(raw) != nil {
+		if !ok || d.validate(raw) != nil {
 			return false
 		}
 	}
 	return true
 }
-func String(ctx context.Context, key string) (string, error) {
-	m, e := all(ctx)
-	if e != nil {
-		return "", e
-	}
-	v, ok := m[key]
-	if !ok {
-		return "", apperror.ErrInvalidSetting
-	}
-	var out string
-	if e = json.Unmarshal(v, &out); e != nil {
-		return "", fmt.Errorf("setting %s is not a string", key)
-	}
-	return out, nil
+func String(ctx context.Context, key string) (string, error) { return read[string](ctx, key, "string") }
+func Bool(ctx context.Context, key string) (bool, error)     { return read[bool](ctx, key, "boolean") }
+func Int(ctx context.Context, key string) (int, error)       { return read[int](ctx, key, "integer") }
+func Strings(ctx context.Context, key string) ([]string, error) {
+	return read[[]string](ctx, key, "string_array")
 }
-func Bool(ctx context.Context, key string) (bool, error) {
-	m, e := all(ctx)
-	if e != nil {
-		return false, e
+
+func read[T any](ctx context.Context, key, expected string) (T, error) {
+	var out T
+	values, err := all(ctx)
+	if err != nil {
+		return out, err
 	}
-	v, ok := m[key]
+	value, ok := values[key]
 	if !ok {
-		return false, apperror.ErrInvalidSetting
+		return out, apperror.ErrInvalidSetting
 	}
-	var out bool
-	if e = json.Unmarshal(v, &out); e != nil {
-		return false, fmt.Errorf("setting %s is not a boolean", key)
+	if err := json.Unmarshal(value, &out); err != nil {
+		return out, fmt.Errorf("%w: setting %s is not %s", apperror.ErrInvalidSetting, key, expected)
 	}
 	return out, nil
 }
 
-// Entry is a safe business-level setting description, without HTTP formatting.
-// Sensitive values are excluded here as well as in the resource layer.
+// Entry describes a setting's effective value and code-defined default.
 type Entry struct {
-	Key       string
-	Type      string
-	Value     json.RawMessage
-	Sensitive bool
+	Key     string
+	Type    string
+	Value   json.RawMessage
+	Default json.RawMessage
 }
 
 func List(ctx context.Context) ([]Entry, error) {
@@ -181,9 +150,10 @@ func List(ctx context.Context) ([]Entry, error) {
 func entries(values map[string]json.RawMessage, defs []SettingDefinition) []Entry {
 	out := make([]Entry, 0, len(defs))
 	for _, d := range defs {
-		entry := Entry{Key: d.Key, Type: d.Type, Sensitive: d.Sensitive}
-		if !d.Sensitive {
-			entry.Value = values[d.Key]
+		entry := Entry{
+			Key: d.Key, Type: d.Type,
+			Value:   append(json.RawMessage(nil), values[d.Key]...),
+			Default: append(json.RawMessage(nil), d.Default...),
 		}
 		out = append(out, entry)
 	}
@@ -210,7 +180,7 @@ func Update(ctx context.Context, values map[string]json.RawMessage) error {
 		for _, d := range defs {
 			if d.Key == key {
 				found = true
-				if d.Validate(raw) != nil {
+				if d.validate(raw) != nil {
 					return fmt.Errorf("%w: %s", apperror.ErrInvalidSetting, key)
 				}
 				break
@@ -227,19 +197,25 @@ func Update(ctx context.Context, values map[string]json.RawMessage) error {
 		return err
 	}
 	if core.Redis != nil {
-		// Invalidation still gets a bounded attempt when the HTTP request is canceled.
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
-		var err error
-		for i := 0; i < 3; i++ {
-			err = invalidateSettings.Run(cleanup, core.Redis, []string{cacheKey(), cacheKey() + ":version"}).Err()
-			if err == nil {
-				break
-			}
-		}
-		if err != nil {
-			core.Log.Error("settings committed but cache invalidation failed; bounded by cache TTL", "error", err)
+		// Commit succeeded: cache invalidation must still run if the request was canceled.
+		if err := ClearCache(context.WithoutCancel(ctx)); err != nil {
+			return fmt.Errorf("settings committed but cache invalidation failed: %w", err)
 		}
 	}
 	return nil
+}
+
+// ClearCache invalidates the shared snapshot and rejects stale in-flight fills.
+// Requires Redis. The caller initializes resources; no database access is needed.
+func ClearCache(ctx context.Context) error {
+	cleanup, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		err = invalidateSettings.Run(cleanup, core.Redis, []string{cacheKey, cacheKey + ":version"}).Err()
+		if err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("clear settings cache: %w", err)
 }

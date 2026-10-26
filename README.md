@@ -35,7 +35,7 @@ go run ./cmd config:init
 
 编辑生成的 `config.yaml`：
 
-- 设置 `app.name` 和项目专用的 `redis.prefix`，例如 `myapp`。
+- 设置 `app.name`，例如 `myapp`。
 - 填写 MySQL 和 Redis 连接信息。
 
 实际配置文件已被 Git 忽略。默认配置路径相对于**当前工作目录**；部署建议使用绝对路径。
@@ -80,6 +80,7 @@ app [-c config.yaml] migrate version
 app [-c config.yaml] migrate force VERSION --yes
 app [-c config.yaml] admin:create --username admin
 app [-c config.yaml] queue:example --delay 10s
+app [-c config.yaml] settings:clear-cache
 app [-c config.yaml] config:init
 app hello
 app version
@@ -102,7 +103,7 @@ internal/
     infrastructure/      DB、Redis、日志、HTTP 客户端、会话、队列
       cli/               根命令、服务启动、迁移与配置生成
       scheduler/         定时任务类型与调度运行机制
-    request/             路由绑定校验包装、ID 与分页参数解析
+    request/             路由绑定校验包装、ID、分页与 Token 提取
     response/            响应信封、错误转换、流式输出
     resource/            单个可选模型、集合、分页的通用输出转换
     testutil/            全局资源测试辅助
@@ -136,8 +137,8 @@ docs/                    API、扩展方法、部署说明
 - 每个会话使用独立 Redis 键和 TTL，Redis 只存 Token 哈希标识。
 - `auth.admin.allow_multiple_sessions: false` 表示新登录撤销旧会话；通过 Lua 原子执行，并发下也只保留一个。
 - 多会话切换为单会话后，在下一次成功登录时清理旧会话。配置修改需重启。
-- 改密码、禁用、删除会撤销会话；认证同时检查数据库账号状态及 `auth_version`，因此每个管理请求包含 Redis 和 MySQL 读取。Redis 清理失败也无法继续使用已失效身份。
-- 会话有效期固定，不自动续期；退出只撤销当前会话。
+- 认证中间件只验证 Redis 会话和 admin 身份域，在 Locals 保存当前 ID，不查询 MySQL、不加载管理员模型。需要模型的接口自行查询。修改/重置密码、切换启用状态和删除账号后删除该账号的全部 Redis 会话，撤销失败返回错误，不静默返回成功。
+- 会话有效期固定，不自动续期；退出只撤销当前会话。本人改密和重置密码使用事务行锁，旧密码验证与更新在同一把锁内完成。
 
 ## 配置、日志与设置
 
@@ -145,9 +146,11 @@ docs/                    API、扩展方法、部署说明
 
 配置以 `config.yaml` 为唯一运行配置来源，不自动读取 `.env` 或环境变量。支持未知字段检查、默认值和按命令验证。日志支持 `debug/info/warn/error`，输出可选 `stdout/file/both`，文件按大小轮转。日志不输出 Authorization、密码、SQL 参数或请求正文。
 
-业务设置存入 MySQL `settings` 表，以 JSON 保留类型。Redis 缓存整个已声明的设置集合，默认 1 分钟。设置通过无请求状态的包函数 `settings.String/Bool/Set/Update/List` 调用，无需创建或注入服务实例。设置定义位于 `internal/service/settings/settings.go`，默认有 `site.name` 和 `site.maintenance`；后者只是示例配置项，不自动阻止请求。
+业务设置存入 MySQL `settings` 表，以 JSON 保留类型。Redis 使用永久 Hash `settings` 缓存整份设置，每个字段保存 JSON 编码的值；`settings:version` 保存永久版本号，防止旧查询覆盖更新后的缓存。设置通过无状态包函数 `settings.String/Bool/Int/Strings/Set/Update/List/ClearCache` 调用，无需实例或注入。定义集中在 `internal/service/settings/definitions.go`，现有 `site.name` 和 `site.maintenance` 仍为示例，后者不自动阻止请求。
 
-读取缓存失败时回源 MySQL。修改先提交数据库，再清除缓存并更新缓存版本；过期读不能在成功失效后重新写入旧缓存。失效失败会有短暂重试和错误日志，以 TTL 为最终上限。当前模型接受短暂最终一致性。敏感定义不向列表 API 返回值；不要把数据库/Redis 凭证放入业务设置。
+缓存未命中时合并代码默认值和数据库记录；读取和保存都检查已声明的 key、类型及设置规则。读取缓存失败时回源 MySQL，没有初始化 Redis 时直接读写数据库。修改提交数据库后递增版本并删除整个 Hash，失效最多重试 3 次、总计最多 3 秒；失败返回错误，数据库提交不会回滚。列表公开返回 key、type、value、default，JSON 类型保持不变。
+
+手动清理：`go run ./cmd settings:clear-cache`，只需要 Redis，不需要 MySQL。该命令和修改设置共用“递增版本 + 删除缓存”的失效逻辑。修改默认值或校验定义后，也可用它主动刷新缓存。
 
 ## 队列和定时任务
 
@@ -160,7 +163,7 @@ go run ./cmd queue:work
 go run ./cmd queue:example --delay 10s
 ```
 
-`server` 不启动消费者，`queue:work` 是独立进程。队列 Redis 地址为空时复用 `redis` 的连接配置；填入地址后使用 `queue.redis`。**Asynq 不使用本模板的 Redis prefix：不同项目应为队列使用独立 Redis DB 或实例。** Redis 的逻辑 DB 不隔离内存淘汰策略；持久化和 noeviction 配置见部署文档。
+`server` 不启动消费者，`queue:work` 是独立进程。队列 Redis 地址为空时复用 `redis` 的连接配置；填入地址后使用 `queue.redis`。不同项目使用独立 Redis DB 或实例区分会话、缓存和队列数据。 Redis 的逻辑 DB 不隔离内存淘汰策略；持久化和 noeviction 配置见部署文档。
 
 提供立即/延迟任务、队列权重、重试次数、超时和并发配置。任务的重复执行保护、业务补偿、数据库与入队一致性由项目自己实现。超时通过 context 协作取消，不会强杀任意 Go 函数。
 
@@ -191,9 +194,10 @@ $env:GOTEMPLATE_TEST_MYSQL_ADDRESS='127.0.0.1:3306'
 $env:GOTEMPLATE_TEST_MYSQL_USER='root'
 $env:GOTEMPLATE_TEST_MYSQL_PASSWORD='local-test-password'
 $env:GOTEMPLATE_TEST_REDIS_ADDRESS='127.0.0.1:6379'
+$env:GOTEMPLATE_TEST_REDIS_DB='15'
 go test -tags=integration ./integration -count=1 -timeout=3m
 ```
 
-这些环境变量仅用于测试，不参与应用配置。集成测试创建随机命名的专用数据库并在结束时删除，需要创建/删除数据库权限；仅指向测试服务。未设置地址时测试会跳过。GitHub CI 包含 Windows/Linux 单元测试、Linux race 检查及 MySQL/Redis 服务集成测试。
+这些环境变量仅用于测试，不参与应用配置。集成测试创建随机命名的专用 MySQL 数据库并在结束时删除，需要创建/删除数据库权限；Redis 使用独占的测试 DB（默认 15，可通过 GOTEMPLATE_TEST_REDIS_DB 指定正整数），运行前必须为空，结束后清理本次测试数据。不要并发使用同一个测试 Redis DB；仅指向测试服务。未设置地址时测试会跳过。GitHub CI 包含 Windows/Linux 单元测试、Linux race 检查及 MySQL/Redis 服务集成测试。
 
 更多内容：[API 文档](docs/api.md)、[开发约定](docs/development.md)、[部署说明](docs/deployment.md)。

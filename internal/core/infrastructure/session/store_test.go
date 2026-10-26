@@ -16,7 +16,7 @@ func setup(t *testing.T) (*Store, *miniredis.Miniredis, *redis.Client) {
 	m := miniredis.RunT(t)
 	r := redis.NewClient(&redis.Options{Addr: m.Addr(), MaxRetries: -1})
 	t.Cleanup(func() { r.Close() })
-	return New(r, "test"), m, r
+	return New(r), m, r
 }
 func TestConcurrentSingleSession(t *testing.T) {
 	s, _, _ := setup(t)
@@ -28,7 +28,7 @@ func TestConcurrentSingleSession(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			token, _, err := s.Issue(ctx, "admin", 1, 1, time.Hour, false)
+			token, _, err := s.Issue(ctx, "admin", 1, time.Hour, false)
 			if err != nil {
 				errs <- err
 			} else {
@@ -57,15 +57,15 @@ func TestConcurrentSingleSession(t *testing.T) {
 func TestMultiSessionRevokeTTLAndRealm(t *testing.T) {
 	s, m, r := setup(t)
 	ctx := context.Background()
-	a, _, err := s.Issue(ctx, "admin", 1, 1, time.Hour, true)
+	a, _, err := s.Issue(ctx, "admin", 1, time.Hour, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _, err := s.Issue(ctx, "admin", 1, 1, 2*time.Hour, true)
+	b, _, err := s.Issue(ctx, "admin", 1, 2*time.Hour, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	web, _, err := s.Issue(ctx, "web", 1, 1, time.Hour, true)
+	web, _, err := s.Issue(ctx, "web", 1, time.Hour, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,11 +103,11 @@ func TestMultiSessionRevokeTTLAndRealm(t *testing.T) {
 func TestSwitchToSingleAndInfrastructureError(t *testing.T) {
 	s, m, _ := setup(t)
 	ctx := context.Background()
-	old, _, err := s.Issue(ctx, "admin", 1, 1, time.Hour, true)
+	old, _, err := s.Issue(ctx, "admin", 1, time.Hour, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	latest, _, err := s.Issue(ctx, "admin", 1, 1, time.Hour, false)
+	latest, _, err := s.Issue(ctx, "admin", 1, time.Hour, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestSwitchToSingleAndInfrastructureError(t *testing.T) {
 	if _, err = s.Validate(ctx, latest); err == nil || errors.Is(err, ErrInvalid) {
 		t.Fatal("infrastructure error disguised as invalid token")
 	}
-	if _, _, err = s.Issue(ctx, "admin", 1, 1, time.Hour, true); err == nil {
+	if _, _, err = s.Issue(ctx, "admin", 1, time.Hour, true); err == nil {
 		t.Fatal("failed issue returned success")
 	}
 }

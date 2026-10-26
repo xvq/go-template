@@ -18,7 +18,7 @@ func Register(app *fiber.App) error {
 	s := &handler.Settings{}
 	api := app.Group("/api/admin")
 	api.Post("/login", commonmiddleware.LoginLimit(), request.JSON(h.Login))
-	api.Use(middleware.Auth(admins))
+	api.Use(middleware.Auth())
 	api.Post("/logout", h.Logout)
 	api.Get("/me", h.Me)
 	api.Put("/me/password", request.JSON(h.ChangePassword))

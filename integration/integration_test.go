@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"github.com/xvq/go-template/internal/app/admin/service"
+	"github.com/xvq/go-template/internal/apperror"
 	"github.com/xvq/go-template/internal/core/bootstrap"
 	"github.com/xvq/go-template/internal/core/config"
 	"github.com/xvq/go-template/internal/core/infrastructure/cli"
@@ -79,7 +81,14 @@ func environment(t *testing.T) (config.Config, *gorm.DB, *redis.Client, *slog.Lo
 	c.Database.Database = name
 	c.Redis.Address = raddr
 	c.Redis.Password = os.Getenv("GOTEMPLATE_TEST_REDIS_PASSWORD")
-	c.Redis.Prefix = name
+	// Tests exclusively use a separate, initially empty Redis database.
+	c.Redis.DB = 15
+	if value := os.Getenv("GOTEMPLATE_TEST_REDIS_DB"); value != "" {
+		c.Redis.DB, err = strconv.Atoi(value)
+		if err != nil || c.Redis.DB < 1 {
+			t.Fatal("GOTEMPLATE_TEST_REDIS_DB must be a positive database number")
+		}
+	}
 	migration, err := cli.OpenMigrator(c.Database)
 	if err != nil {
 		t.Fatal(err)
@@ -98,17 +107,28 @@ func environment(t *testing.T) (config.Config, *gorm.DB, *redis.Client, *slog.Lo
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { pool, _ := db.DB(); pool.Close() })
-	r := redis.NewClient(&redis.Options{Addr: raddr, Password: c.Redis.Password})
+	r := redis.NewClient(&redis.Options{Addr: raddr, Password: c.Redis.Password, DB: c.Redis.DB})
 	if err = r.Ping(context.Background()).Err(); err != nil {
 		r.Close()
 		t.Fatal(err)
 	}
+	count, err := r.DBSize(context.Background()).Result()
+	if err != nil {
+		r.Close()
+		t.Fatal(err)
+	}
+	if count != 0 {
+		r.Close()
+		t.Fatalf("Redis test DB %d must be empty; existing keys will not be removed", c.Redis.DB)
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		keys := r.Scan(ctx, 0, name+":*", 100).Iterator()
+		keys := r.Scan(ctx, 0, "*", 100).Iterator()
 		for keys.Next(ctx) {
-			r.Del(ctx, keys.Val())
+			if err := r.Del(ctx, keys.Val()).Err(); err != nil {
+				t.Error(err)
+			}
 		}
 		if err := keys.Err(); err != nil {
 			t.Error(err)
@@ -143,7 +163,7 @@ func call(t *testing.T, app *fiber.App, method, path, token, body string, want i
 	return out
 }
 func TestAdminAPISettingsAndMigrations(t *testing.T) {
-	c, _, _, _ := environment(t)
+	c, _, redisClient, _ := environment(t)
 	ctx := context.Background()
 	admins, err := service.NewAdmin()
 	if err != nil {
@@ -158,7 +178,8 @@ func TestAdminAPISettingsAndMigrations(t *testing.T) {
 		t.Fatal(err)
 	}
 	call(t, app, "GET", "/api/admin/admins", "", "", 401)
-	call(t, app, "POST", "/api/admin/login", "", `{"username":"admin","password":"wrong"}`, 401)
+	call(t, app, "POST", "/api/admin/login", "", `{"username":"admin","password":"wrong"}`, 422)
+	call(t, app, "POST", "/api/admin/login", "", `{"username":"admin","password":"wrong-password"}`, 401)
 	login := call(t, app, "POST", "/api/admin/login", "", `{"username":"admin","password":"secure-password"}`, 200)
 	token := login["data"].(map[string]any)["token"].(string)
 	call(t, app, "GET", "/health/ready", "", "", 200)
@@ -168,6 +189,8 @@ func TestAdminAPISettingsAndMigrations(t *testing.T) {
 	}
 	created := call(t, app, "POST", "/api/admin/admins", token, `{"username":"second","password":"secure-password","display_name":"第二个管理员"}`, 201)
 	id := uint64(created["data"].(map[string]any)["id"].(float64))
+	secondLogin := call(t, app, "POST", "/api/admin/login", "", `{"username":"second","password":"secure-password"}`, 200)
+	secondToken := secondLogin["data"].(map[string]any)["token"].(string)
 	listed := call(t, app, "GET", "/api/admin/admins?page=1&page_size=1", token, "", 200)["data"].(map[string]any)
 	meta := listed["pagination"].(map[string]any)
 	if meta["total"] != float64(2) || meta["per_page"] != float64(1) || meta["last_page"] != float64(2) || meta["current_page"] != float64(1) || meta["count"] != float64(1) || len(listed["data"].([]any)) != 1 {
@@ -180,7 +203,18 @@ func TestAdminAPISettingsAndMigrations(t *testing.T) {
 	}
 	call(t, app, "POST", "/api/admin/admins", token, `{"username":"second","password":"secure-password"}`, 409)
 	call(t, app, "PATCH", fmt.Sprintf("/api/admin/admins/%d", id), token, `{"display_name":"第二个管理员","enabled":false}`, 200)
-	call(t, app, "GET", "/api/admin/settings", token, "", 200)
+	call(t, app, "GET", "/api/admin/me", secondToken, "", 401)
+	settingsList := call(t, app, "GET", "/api/admin/settings", token, "", 200)
+	firstSetting := settingsList["data"].([]any)[0].(map[string]any)
+	if firstSetting["default"] != "Go Template" || firstSetting["value"] != "Go Template" {
+		t.Fatalf("missing typed defaults: %v", firstSetting)
+	}
+	if redisClient.Type(ctx, "settings").Val() != "hash" {
+		t.Fatal("settings cache must be a hash")
+	}
+	if ttl, err := redisClient.Do(ctx, "TTL", "settings").Int64(); err != nil || ttl != -1 {
+		t.Fatalf("cache is not permanent: ttl=%d err=%v", ttl, err)
+	}
 	call(t, app, "PATCH", "/api/admin/settings", token, `{"values":{"site.name":"Integration","site.maintenance":true}}`, 200)
 	if name, err := settingsservice.String(ctx, "site.name"); err != nil || name != "Integration" {
 		t.Fatal(name, err)
@@ -191,6 +225,32 @@ func TestAdminAPISettingsAndMigrations(t *testing.T) {
 	call(t, app, "DELETE", fmt.Sprintf("/api/admin/admins/%d", first.ID), token, "", 409)
 	call(t, app, "PUT", "/api/admin/me/password", token, `{"current_password":"secure-password","password":"new-secure-password"}`, 200)
 	call(t, app, "GET", "/api/admin/me", token, "", 401)
+	t.Run("concurrent password changes", func(t *testing.T) {
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		for _, password := range []string{"concurrent-one", "concurrent-two"} {
+			go func() {
+				<-start
+				results <- admins.ChangePassword(ctx, first.ID, "new-secure-password", password)
+			}()
+		}
+		close(start)
+		// Drain both workers before any fatal assertion or fixture cleanup.
+		outcomes := []error{<-results, <-results}
+		successes, rejected := 0, 0
+		for _, err := range outcomes {
+			if err == nil {
+				successes++
+			} else if errors.Is(err, apperror.ErrCredentials) {
+				rejected++
+			} else {
+				t.Fatal(err)
+			}
+		}
+		if successes != 1 || rejected != 1 {
+			t.Fatalf("successes=%d rejected=%d", successes, rejected)
+		}
+	})
 	migration, err := cli.OpenMigrator(c.Database)
 	if err != nil {
 		t.Fatal(err)
@@ -247,8 +307,8 @@ func TestGORMNestedAssociations(t *testing.T) {
 func TestRealQueueConsumption(t *testing.T) {
 	c, _, _, log := environment(t)
 	c.Queue.Enabled = true
-	c.Queue.DefaultQueue = c.Redis.Prefix
-	c.Queue.Queues = map[string]int{c.Redis.Prefix: 1}
+	c.Queue.DefaultQueue = c.Database.Database
+	c.Queue.Queues = map[string]int{c.Queue.DefaultQueue: 1}
 	c.Queue.Concurrency = 1
 	server := taskqueue.NewServer(c, log)
 	mux := asynq.NewServeMux()

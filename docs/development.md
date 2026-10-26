@@ -38,7 +38,7 @@ type Login struct {
 
 管理员更新采用完整表单：display_name 使用 required,max=100，enabled 使用 *bool 加 required，拒绝缺省/null，同时允许 false。校验后服务接收具体 string/bool，并明确更新两个字段，不再区分局部更新字段。复杂校验可注册自定义规则；数据库唯一性、权限和事务等业务规则仍放在 service。
 
-ID、分页通过 request.ID(c)、request.Pagination(c) 在需要时读取，不使用全局参数中间件或自定义 Context。
+ID、分页、Bearer Token 通过 request.ID(c)、request.Pagination(c)、request.Token(c) 在需要时读取，不使用全局参数中间件或自定义 Context。request.Token 仅提取 Authorization 请求头中的 Bearer Token，缺失或格式错误返回空字符串；会话和账号有效性仍由 Auth 中间件及 service 验证。
 
 ## 公共资源与生命周期
 
@@ -98,7 +98,7 @@ base 是 internal/core/resource 的导入别名。Item/Collection/Page 统一由
 
 资源可以组合：在 transform 内调用其他资源的 Item(modelPointer) 或 Collection(rows)。例如登录日志关联管理员时可调用 AdminResource.Item(log.Admin)，nil 转为 null（输出字段带 omitempty 时省略）。关联数据必须由 service 提前加载，转换过程不执行查询；不增加尚未需要的模型关联。避免双向资源转换无限递归，必要时分成简要资源和详情资源。
 
-resource 只转换已经加载的数据，不查询数据库、不触发懒加载；关联需要在 service 里用 Preload 等方式提前加载。公开字段显式列出，密码哈希、认证版本等内部字段不进入响应。
+resource 只转换已经加载的数据，不查询数据库、不触发懒加载；关联需要在 service 里用 Preload 等方式提前加载。公开字段显式列出，密码哈希等内部字段不进入响应。
 
 ## 分页查询
 
@@ -140,11 +140,25 @@ err := core.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 ## 会话与设置
 
-`core.Session` 在 `Options.Redis: true` 且 Redis 初始化成功后自动创建，复用 `core.Redis` 和 `core.Config.Redis.Prefix`，无需额外的 Session 选项。未初始化 Redis 时为 nil；业务仅在需要会话功能时启用 Redis。Session 不持有独立连接，无需单独关闭，`Resources.Close()` 关闭 Redis 并清空 Session。管理员创建等纯数据库操作不依赖 Session。
+`core.Session` 在 `Options.Redis: true` 且 Redis 初始化成功后自动创建，复用 `core.Redis` 连接池，无需额外的 Session 选项。未初始化 Redis 时为 nil；业务仅在需要会话功能时启用 Redis。Session 不持有独立连接，无需单独关闭，`Resources.Close()` 关闭 Redis 并清空 Session。管理员创建等纯数据库操作不依赖 Session。
 
-会话服务接受身份域与 ID，禁止把普通用户 Token 当管理员 Token 使用。多会话开关在签发时应用；通过数据库 auth_version/status 处理管理员安全状态变更。新增用户业务应自行设计状态校验，不直接复用管理员模型。
+会话服务接受身份域与 ID，不存储认证版本。Auth() 只验证 Redis 会话和 admin 身份域，再通过私有 Locals 键保存 ID；handler 通过 middleware.CurrentID(c) 读取，认证不查询数据库。/me 等需要模型的接口自行调用 service.Get。登录仍查询 MySQL 校验密码和 enabled，禁止把普通用户 Token 当管理员 Token 使用。
 
-设置在 `SettingDefinitions()` 声明。通过包函数 `settings.String/Bool` 获取明确类型，`settings.Set(ctx, key, value)` 更新单项，`settings.Update(ctx, map[string]json.RawMessage{...})` 批量更新，`settings.List(ctx)` 返回管理列表；无需实例或构造函数，调用方处理错误。Set 接受 Go 值并编码为 JSON，与 Update 共用键名、类型、值校验和缓存失效逻辑。包内不缓存设置值，数据在 MySQL 和 Redis 中；默认值、缓存 TTL 和前缀来自定义及 `core.Config`。Redis 未初始化时直接读写数据库。敏感字段在管理列表中省略 value；数据库内的设置值本身未加密。添加新类型时同时添加校验规则和对应类型读取方法。
+多会话开关在签发时应用；修改/重置密码、切换启用状态和删除账号后调用 RevokeAll 删除所有 Redis 会话。撤销错误必须向调用方返回，不能只记录日志后返回成功。数据库修改已提交时，Redis 撤销失败不会回滚数据库；数据库与 Redis 操作不保证跨存储原子性，并发登录与撤销存在竞态边界。直接修改数据库也不会自动撤销会话。这是纯 Redis 认证的取舍，不增加认证版本、补偿任务或数据库逐请求校验。
+
+本人改密和重置密码在事务内锁定目标账号（SELECT FOR UPDATE）；本人改密在持锁状态下验证旧密码再更新，避免并发请求使用已经失效的旧密码覆盖新密码。新增用户业务应自行设计状态校验，不直接复用管理员模型。
+
+设置定义集中在 `internal/service/settings/definitions.go`：SettingDefinition 包含 Key、Type、Default（JSON 原始值）和可选 Validate 函数。String/Bool/Int/Strings 分别读取 string、boolean、integer、string_array，返回 string/bool/int/[]string。类型严格校验，不接受字符串转数字/布尔值，数组不允许混入其他类型或 null；空数组是否允许由具体设置规则决定。不新增无关业务示例；现有 site.name、site.maintenance 保留。
+
+内部 all 读取整份设置，List 返回按定义顺序排列的 Entry{Key,Type,Value,Default}。后台资源输出 key/type/value/default，不再有敏感值过滤机制。值和默认值均保留真实 JSON 类型，复制 RawMessage 后返回，避免调用方修改原数据。设置服务无请求状态，不缓存进程内数据，不需要创建或注入服务实例。
+
+Redis Hash `settings` 永久保存完整快照，字段名为设置 key，每个字段的值采用 JSON 编码。HGETALL 命中后校验设置项是否齐全及值是否合法；未命中或不完整时读取 MySQL，以代码默认值为基础用数据库记录覆盖，再校验和回填。默认值本身不会插入数据库，只有 Set/Update 才执行事务 upsert。Redis 不可用时回源数据库；没有初始化 Redis 时每次直接读取数据库。
+
+`settings:version` 是无过期时间的字符串计数器。回源前读取版本（不存在视为 0），回填 Lua 在版本相同时一次替换整个 Hash，不设置过期时间。它防止旧回源结果重新进入共享缓存，不保证已经开始的读取立刻拿到最新值。新增/删除定义导致缓存项不齐全时会重新加载；仅修改默认值但旧值仍合法时，需主动清缓存使新默认值生效。
+
+Set(ctx,key,value) 将 Go 值编码为 JSON 后调用 Update；Update 校验所有输入，再在 MySQL 事务中写入。提交成功后调用 ClearCache：Lua 原子递增版本并删除 Hash。ClearCache 需要已初始化 Redis，不查数据库，最多尝试 3 次、总期限 3 秒。Update 在数据库提交后脱离原请求的取消信号进行这次有界失效；最终失败返回错误，MySQL 已提交的修改不会自动回滚。不存在 TTL 自动修复机制，可修复 Redis 后执行手动清理命令。
+
+`go run ./cmd settings:clear-cache` 在执行时通过 bootstrap.Options{Name:"settings:clear-cache",Redis:true} 初始化资源，再调用相同的 ClearCache。help 不读取配置，不要求 MySQL，也不添加 HTTP 清缓存接口或其他业务能力。
 
 ## HTTP 客户端
 
@@ -184,7 +198,7 @@ info, err := core.Queue.Enqueue(ctx, "mail:send", payload,
 
 返回 nil 表示处理成功；返回错误触发重试；不可恢复的参数错误可以包装 `asynq.SkipRetry`。消费者收到的 context 必须传给 DB/HTTP 操作，并在长循环中检查取消。超时不会强杀不响应 context 的代码。
 
-模板只负责基础设施，不实现业务幂等、事务 outbox 或补偿。任务可能重复执行，项目按业务需要处理。Asynq 存储键不使用 `redis.prefix`，跨项目必须隔离队列 DB/实例。
+模板只负责基础设施，不实现业务幂等、事务 outbox 或补偿。任务可能重复执行，项目按业务需要处理。会话、限流、设置缓存和 Asynq 使用固定用途的键名，跨项目通过独立 Redis DB/实例隔离。
 
 任务需要数据库等依赖时，在 `internal/core/infrastructure/cli/queue_work.go` 的 `bootstrap.Options` 启用所需资源，任务直接使用 `core.DB` 等公共资源。默认示例只需日志，因此 queue:work 不要求 MySQL。
 
@@ -234,7 +248,7 @@ HTTP 未识别的内部错误和显式 5xx 错误向前端返回通用提示；�
 - 手工开发可以使用隔离的测试 MySQL/Redis 联调；自动测试优先保护认证、事务、缓存一致性和已修复的问题，不追求覆盖率或要求简单功能逐一补测试。
 - 使用全局资源的测试必须串行，不调用 `t.Parallel()`；`internal/core/testutil.UseCore` 安装测试连接并在清理时恢复所有全局变量。连接由测试创建者关闭；后台请求/任务必须先停止。不同包的测试进程有各自的全局变量，真实 DB/Redis 数据仍需隔离。
 - 默认测试不连接真实外部服务，使用 sqlmock 与 miniredis 验证错误路径和 Redis Lua 行为。
-- `integration` 构建标签提供真实 MySQL/Redis 验证：迁移上下行、管理 API、密码撤销、设置缓存、四表嵌套预加载、实际队列消费。
+- `integration` 构建标签使用独占且初始为空的 Redis 测试 DB（默认 15，GOTEMPLATE_TEST_REDIS_DB 可指定其他正整数，禁止与其他服务并发共用），结束后清理该 DB 的测试数据；MySQL 使用随机临时库。提供真实 MySQL/Redis 验证：迁移上下行、管理 API、密码撤销、设置缓存、四表嵌套预加载、实际队列消费。
 - Mock 测试不能证明 MySQL 事务隔离或真实 Redis 的全部语义，发布前执行 CI 集成测试。
 - 不对生产数据库执行测试；所有自动建表只允许出现在随机创建的测试库。
 

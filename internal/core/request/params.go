@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/xvq/go-template/internal/apperror"
 	"strconv"
+	"strings"
 )
 
 func Pagination(c fiber.Ctx) (int, int, error) {
@@ -28,4 +29,14 @@ func ID(c fiber.Ctx) (uint64, error) {
 		return 0, fiber.NewError(400, "ID 无效")
 	}
 	return id, nil
+}
+
+// Token extracts a Bearer token without authenticating it.
+// Missing or malformed Authorization headers return an empty string.
+func Token(c fiber.Ctx) string {
+	parts := strings.Fields(c.Get("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return parts[1]
 }

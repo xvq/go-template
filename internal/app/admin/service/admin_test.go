@@ -11,6 +11,7 @@ import (
 	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/core/config"
 	passwordhash "github.com/xvq/go-template/internal/core/infrastructure/password"
+	"github.com/xvq/go-template/internal/core/infrastructure/session"
 	"github.com/xvq/go-template/internal/core/testutil"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -19,7 +20,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 )
 
 func mockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
@@ -36,13 +36,12 @@ func mockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	return db, m
 }
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
-func TestLoginAndAccountVersionInvalidation(t *testing.T) {
+func TestLoginAndLogout(t *testing.T) {
 	db, m := mockDB(t)
 	mr := miniredis.RunT(t)
 	r := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer r.Close()
 	c := config.Defaults()
-	c.Redis.Prefix = "test"
 	testutil.UseCore(t, c, db, r, testLogger())
 	s, err := NewAdmin()
 	if err != nil {
@@ -53,7 +52,7 @@ func TestLoginAndAccountVersionInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.ExpectQuery("SELECT .*admins").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "password_hash", "enabled", "auth_version"}).AddRow(1, "admin", hash, true, 1))
+	m.ExpectQuery("SELECT .*admins").WillReturnRows(sqlmock.NewRows([]string{"id", "username", "password_hash", "enabled"}).AddRow(1, "admin", hash, true))
 	m.ExpectBegin()
 	m.ExpectExec("INSERT INTO .*admin_login_logs").WillReturnResult(sqlmock.NewResult(1, 1))
 	m.ExpectCommit()
@@ -64,20 +63,14 @@ func TestLoginAndAccountVersionInvalidation(t *testing.T) {
 	if result.Token == "" || result.Admin.ID != 1 {
 		t.Fatal("invalid login result")
 	}
-	m.ExpectQuery("SELECT .*admins").WillReturnRows(sqlmock.NewRows([]string{"id", "enabled", "auth_version"}).AddRow(1, true, 2))
-	if _, err = s.Authenticate(context.Background(), result.Token); !errors.Is(err, apperror.ErrUnauthorized) {
-		t.Fatalf("stale password version authenticated: %v", err)
-	}
-	m.ExpectQuery("SELECT .*admins").WillReturnRows(sqlmock.NewRows([]string{"id", "enabled", "auth_version"}).AddRow(1, false, 1))
-	if _, err = s.Authenticate(context.Background(), result.Token); !errors.Is(err, apperror.ErrUnauthorized) {
-		t.Fatalf("disabled account authenticated: %v", err)
-	}
-	web, _, err := core.Session.Issue(context.Background(), "web", 1, 1, time.Hour, true)
-	if err != nil {
+	if _, err := core.Session.Validate(context.Background(), result.Token); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.Authenticate(context.Background(), web); !errors.Is(err, apperror.ErrUnauthorized) {
-		t.Fatal("web token accepted as admin")
+	if err := s.Logout(context.Background(), result.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Session.Validate(context.Background(), result.Token); !errors.Is(err, session.ErrInvalid) {
+		t.Fatal("logout did not revoke token", err)
 	}
 	if err = m.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

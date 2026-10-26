@@ -1,6 +1,6 @@
 # API 约定
 
-管理接口前缀 `/api/admin`。除登录之外都要求 `Authorization: Bearer <token>`。管理员权限一致。带请求体的管理接口使用 JSON，请设置 `Content-Type: application/json`；列表分页参数仍通过 URL Query 传入。
+管理接口前缀 `/api/admin`。除登录之外都要求 `Authorization: Bearer <token>`。管理员权限一致。认证只读取 Redis 会话并提供当前管理员 ID，需要管理员模型时由接口自行查询。带请求体的管理接口使用 JSON，请设置 `Content-Type: application/json`；列表分页参数仍通过 URL Query 传入。
 
 ## 响应
 
@@ -64,7 +64,7 @@
 | DELETE | `/admins/:id` | 删除管理员，撤销会话 |
 | PUT | `/admins/:id/password` | `password`；重置密码，撤销其全部会话 |
 | GET | `/login-logs` | 分页查询登录日志 |
-| GET | `/settings` | 设置列表，包含 key、type、sensitive 和非敏感 value |
+| GET | `/settings` | 设置列表，包含 key、type、value、default，保留 JSON 类型 |
 | PATCH | `/settings` | `{"values":{"site.name":"My site","site.maintenance":false}}` |
 
 用户名是 3～64 位大小写英文字母或数字（不要求两者同时出现），按 MySQL 表的大小写不敏感排序规则判断唯一性。密码 6～30 个 **Unicode 字符**，允许中文、符号、空格，不自动裁剪；使用 Argon2id 存储。显示名称最多 100 个 Unicode 字符。管理员更新要求提交完整表单：display_name 不能为空，enabled 不可缺省或为 null，`enabled:false` 是有效值，会禁用账号。
@@ -74,3 +74,5 @@
 所有时间输出 UTC RFC3339，精确到秒，例如 `2026-10-23T03:11:03Z`，包括登录响应的 `expires_at`。登录日志保留历史管理员 ID，不设置删除级联；第一版不自动清除登录日志，具体保留周期由项目定义。
 
 健康接口不要求登录：`GET /health/live` 检查 HTTP 存活，`GET /health/ready` 检查 MySQL 和 Redis 可用性，不检查迁移版本、队列积压或外部业务依赖。
+
+设置值类型支持 string、boolean、integer、string_array；空值和错误类型会被拒绝，设置专用校验规则仍有效。列表的 value 是当前有效值（数据库未保存则使用默认值），default 是代码默认值。修改成功后清空永久缓存；若数据库已提交但缓存失效失败，接口返回错误，数据库修改仍然保留，可执行 settings:clear-cache 重试清理。

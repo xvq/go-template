@@ -8,7 +8,6 @@ type Admin struct {
 	DisplayName  string    `gorm:"size:100" json:"-"`
 	PasswordHash string    `gorm:"size:255" json:"-"`
 	Enabled      bool      `json:"-"`
-	AuthVersion  uint64    `json:"-"`
 	CreatedAt    time.Time `json:"-"`
 	UpdatedAt    time.Time `json:"-"`
 }

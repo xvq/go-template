@@ -20,22 +20,20 @@ var realmPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 type Data struct {
 	Realm     string `json:"realm"`
 	SubjectID uint64 `json:"subject_id"`
-	Version   uint64 `json:"version"`
 	CreatedAt int64  `json:"created_at"` // Unix seconds (UTC).
 	ExpiresAt int64  `json:"expires_at"` // Unix seconds (UTC).
 }
 type Store struct {
-	r      redis.UniversalClient
-	prefix string
+	r redis.UniversalClient
 }
 
-func New(r redis.UniversalClient, prefix string) *Store {
-	return &Store{r: r, prefix: prefix + ":auth:"}
+func New(r redis.UniversalClient) *Store {
+	return &Store{r: r}
 }
 func Hash(token string) string                 { v := sha256.Sum256([]byte(token)); return hex.EncodeToString(v[:]) }
-func (s *Store) sessionKey(hash string) string { return s.prefix + "session:" + hash }
+func (s *Store) sessionKey(hash string) string { return "auth:session:" + hash }
 func (s *Store) indexKey(realm string, id uint64) string {
-	return fmt.Sprintf("%sindex:%s:%d", s.prefix, realm, id)
+	return fmt.Sprintf("auth:index:%s:%d", realm, id)
 }
 
 // Standalone Redis / Sentinel only. All related mutations run atomically.
@@ -55,12 +53,12 @@ redis.call('EXPIREAT', KEYS[2], last[2])
 return 1
 `)
 
-func (s *Store) Issue(ctx context.Context, realm string, id, version uint64, ttl time.Duration, multiple bool) (string, *Data, error) {
+func (s *Store) Issue(ctx context.Context, realm string, id uint64, ttl time.Duration, multiple bool) (string, *Data, error) {
 	if !realmPattern.MatchString(realm) || id == 0 || ttl < time.Second {
 		return "", nil, fmt.Errorf("invalid session arguments")
 	}
 	now := time.Now().Unix()
-	d := &Data{Realm: realm, SubjectID: id, Version: version, CreatedAt: now, ExpiresAt: now + int64(ttl/time.Second)}
+	d := &Data{Realm: realm, SubjectID: id, CreatedAt: now, ExpiresAt: now + int64(ttl/time.Second)}
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return "", nil, err
@@ -76,7 +74,7 @@ func (s *Store) Issue(ctx context.Context, realm string, id, version uint64, ttl
 		}
 		token := hex.EncodeToString(b)
 		hash := Hash(token)
-		n, e := issueScript.Run(ctx, s.r, []string{s.sessionKey(hash), s.indexKey(realm, id)}, now, d.ExpiresAt, string(raw), allow, s.prefix+"session:", hash).Int()
+		n, e := issueScript.Run(ctx, s.r, []string{s.sessionKey(hash), s.indexKey(realm, id)}, now, d.ExpiresAt, string(raw), allow, "auth:session:", hash).Int()
 		if e != nil {
 			return "", nil, fmt.Errorf("issue session: %w", e)
 		}
@@ -140,5 +138,5 @@ func (s *Store) RevokeAll(ctx context.Context, realm string, id uint64) error {
 	if !realmPattern.MatchString(realm) || id == 0 {
 		return fmt.Errorf("invalid subject")
 	}
-	return revokeAllScript.Run(ctx, s.r, []string{s.indexKey(realm, id)}, s.prefix+"session:").Err()
+	return revokeAllScript.Run(ctx, s.r, []string{s.indexKey(realm, id)}, "auth:session:").Err()
 }

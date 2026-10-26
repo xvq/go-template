@@ -51,8 +51,17 @@ func TestHTTPAuthValidationAndRateLimit(t *testing.T) {
 			t.Fatalf("%s status=%d", path, resp.StatusCode)
 		}
 	}
+	// Only the valid-length password reaches authentication and audit storage.
+	m.ExpectQuery("SELECT .*admins").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	m.ExpectBegin()
+	m.ExpectExec("INSERT INTO .*admin_login_logs").WillReturnResult(sqlmock.NewResult(1, 1))
+	m.ExpectCommit()
 	for i := 0; i < 3; i++ {
-		req := httptest.NewRequest("POST", "/api/admin/login", strings.NewReader(`{"username":"!","password":""}`))
+		requestBody := `{"username":"admin","password":"wrong"}`
+		if i == 1 {
+			requestBody = `{"username":"admin","password":"wrong-password"}`
+		}
+		req := httptest.NewRequest("POST", "/api/admin/login", strings.NewReader(requestBody))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Forwarded-For", "1.2.3.4")
 		resp, err := app.Test(req)
@@ -63,6 +72,9 @@ func TestHTTPAuthValidationAndRateLimit(t *testing.T) {
 		json.NewDecoder(resp.Body).Decode(&body)
 		resp.Body.Close()
 		want := 422
+		if i == 1 {
+			want = 401
+		}
 		if i == 2 {
 			want = 429
 		}
@@ -73,7 +85,7 @@ func TestHTTPAuthValidationAndRateLimit(t *testing.T) {
 			t.Fatal("missing request id")
 		}
 	}
-	if r.Exists(context.Background(), c.Redis.Prefix+":login-limit:1.2.3.4").Val() != 0 {
+	if r.Exists(context.Background(), "login-limit:1.2.3.4").Val() != 0 {
 		t.Fatal("trusted spoofed forwarded IP")
 	}
 	if err = m.ExpectationsWereMet(); err != nil {

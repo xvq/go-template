@@ -40,7 +40,6 @@ redis:
   username: ""
   password: ""
   db: 0
-  prefix: go-template
   timeout: 3s
 
 auth:
@@ -49,9 +48,6 @@ auth:
     allow_multiple_sessions: true
     login_limit: 10
     login_window: 1m
-
-settings:
-  cache_ttl: 1m
 
 http_client:
   timeout: 30s

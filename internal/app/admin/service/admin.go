@@ -10,7 +10,6 @@ import (
 	"github.com/xvq/go-template/internal/apperror"
 	"github.com/xvq/go-template/internal/core"
 	passwordhash "github.com/xvq/go-template/internal/core/infrastructure/password"
-	"github.com/xvq/go-template/internal/core/infrastructure/session"
 	"github.com/xvq/go-template/internal/model"
 	"github.com/xvq/go-template/internal/util/query"
 	"github.com/xvq/go-template/internal/util/str"
@@ -52,7 +51,7 @@ func (s *AdminService) Login(ctx context.Context, username, password, ip, ua str
 		s.audit(ctx, a.ID, username, false, "invalid_credentials", ip, ua)
 		return nil, apperror.ErrCredentials
 	}
-	token, d, err := core.Session.Issue(ctx, "admin", a.ID, a.AuthVersion, core.Config.Auth.Admin.TokenTTL, core.Config.Auth.Admin.AllowMultipleSessions)
+	token, d, err := core.Session.Issue(ctx, "admin", a.ID, core.Config.Auth.Admin.TokenTTL, core.Config.Auth.Admin.AllowMultipleSessions)
 	if err != nil {
 		s.audit(ctx, a.ID, username, false, "session_unavailable", ip, ua)
 		return nil, err
@@ -70,30 +69,6 @@ func (s *AdminService) audit(ctx context.Context, id uint64, username string, su
 		core.Log.Error("login audit write failed", "error_type", fmt.Sprintf("%T", err))
 	}
 }
-func (s *AdminService) Authenticate(ctx context.Context, token string) (*model.Admin, error) {
-	d, err := core.Session.Validate(ctx, token)
-	if errors.Is(err, session.ErrInvalid) {
-		return nil, apperror.ErrUnauthorized
-	}
-	if err != nil {
-		return nil, err
-	}
-	if d.Realm != "admin" {
-		return nil, apperror.ErrUnauthorized
-	}
-	var a model.Admin
-	err = core.DB.WithContext(ctx).First(&a, d.SubjectID).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, apperror.ErrUnauthorized
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !a.Enabled || a.AuthVersion != d.Version {
-		return nil, apperror.ErrUnauthorized
-	}
-	return &a, nil
-}
 func (s *AdminService) Logout(ctx context.Context, token string) error {
 	return core.Session.Revoke(ctx, token)
 }
@@ -102,7 +77,7 @@ func (s *AdminService) Create(ctx context.Context, username, name, password stri
 	if err != nil {
 		return model.Admin{}, err
 	}
-	a := model.Admin{Username: username, DisplayName: name, PasswordHash: h, Enabled: enabled, AuthVersion: 1}
+	a := model.Admin{Username: username, DisplayName: name, PasswordHash: h, Enabled: enabled}
 	if err = core.DB.WithContext(ctx).Create(&a).Error; err != nil {
 		return model.Admin{}, mapDBError(err)
 	}
@@ -142,7 +117,6 @@ func (s *AdminService) Update(ctx context.Context, id uint64, in AdminUpdate) (m
 		}
 		changes := map[string]any{"display_name": in.DisplayName, "enabled": in.Enabled}
 		if a.Enabled != in.Enabled {
-			changes["auth_version"] = gorm.Expr("auth_version + 1")
 			revoke = true
 		}
 		if err := tx.Model(&a).Updates(changes).Error; err != nil {
@@ -154,7 +128,9 @@ func (s *AdminService) Update(ctx context.Context, id uint64, in AdminUpdate) (m
 		return model.Admin{}, mapDBError(err)
 	}
 	if revoke {
-		s.revokeAll(ctx, id)
+		if err := s.revokeAllSessions(ctx, id); err != nil {
+			return model.Admin{}, err
+		}
 	}
 	return a, nil
 }
@@ -176,53 +152,43 @@ func (s *AdminService) Delete(ctx context.Context, id uint64) error {
 	if err != nil {
 		return mapDBError(err)
 	}
-	s.revokeAll(ctx, id)
-	return nil
+	return s.revokeAllSessions(ctx, id)
 }
 func (s *AdminService) ChangePassword(ctx context.Context, id uint64, current, newPassword string) error {
-	var a model.Admin
-	if err := core.DB.WithContext(ctx).First(&a, id).Error; err != nil {
-		return mapDBError(err)
-	}
-	matched, err := argon2id.ComparePasswordAndHash(current, a.PasswordHash)
-	if err != nil || !matched {
-		return apperror.ErrCredentials
-	}
-	return s.setPassword(ctx, id, newPassword, &a.AuthVersion)
+	return s.setPassword(ctx, id, &current, newPassword)
 }
 func (s *AdminService) ResetPassword(ctx context.Context, id uint64, password string) error {
-	return s.setPassword(ctx, id, password, nil)
+	return s.setPassword(ctx, id, nil, password)
 }
-func (s *AdminService) setPassword(ctx context.Context, id uint64, password string, expected *uint64) error {
+func (s *AdminService) setPassword(ctx context.Context, id uint64, current *string, password string) error {
 	h, err := argon2id.CreateHash(password, &passwordhash.Params)
 	if err != nil {
 		return err
 	}
-	db := core.DB.WithContext(ctx).Model(&model.Admin{}).Where("id = ?", id)
-	if expected != nil {
-		db = db.Where("auth_version = ?", *expected)
-	}
-	r := db.Updates(map[string]any{"password_hash": h, "auth_version": gorm.Expr("auth_version + 1")})
-	if r.Error != nil {
-		return r.Error
-	}
-	if r.RowsAffected == 0 {
-		if expected != nil {
-			return apperror.ErrUnauthorized
+	err = core.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var a model.Admin
+		// Serialize password changes and resets; verify the current password under the same lock.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&a, id).Error; err != nil {
+			return err
 		}
-		return apperror.ErrNotFound
+		if current != nil {
+			matched, err := argon2id.ComparePasswordAndHash(*current, a.PasswordHash)
+			if err != nil || !matched {
+				return apperror.ErrCredentials
+			}
+		}
+		return tx.Model(&a).Update("password_hash", h).Error
+	})
+	if err != nil {
+		return mapDBError(err)
 	}
-	s.revokeAll(ctx, id)
-	return nil
+	return s.revokeAllSessions(ctx, id)
 }
-func (s *AdminService) revokeAll(ctx context.Context, id uint64) {
-	// AuthVersion/status are checked in MySQL on every request. Even if Redis
-	// cleanup fails, old sessions cannot authenticate; TTL cleans up storage.
-	if core.Session != nil {
-		if err := core.Session.RevokeAll(ctx, "admin", id); err != nil {
-			core.Log.Error("session cleanup failed; database already invalidated identity", "admin_id", id, "error", err)
-		}
+func (s *AdminService) revokeAllSessions(ctx context.Context, id uint64) error {
+	if err := core.Session.RevokeAll(ctx, "admin", id); err != nil {
+		return fmt.Errorf("revoke admin sessions: %w", err)
 	}
+	return nil
 }
 func (s *AdminService) LoginLogs(ctx context.Context, page, size int) (query.Page[model.AdminLoginLog], error) {
 	return query.Paginate[model.AdminLoginLog](

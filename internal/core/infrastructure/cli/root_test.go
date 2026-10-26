@@ -9,7 +9,7 @@ import (
 )
 
 func TestHelpAndHelloWithoutConfig(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"server", "--help"}, {"queue:work", "--help"}, {"hello"}, {"migrate", "--help"}} {
+	for _, args := range [][]string{{"--help"}, {"server", "--help"}, {"queue:work", "--help"}, {"hello"}, {"migrate", "--help"}, {"settings:clear-cache", "--help"}} {
 		root := NewRoot()
 		var out bytes.Buffer
 		root.SetOut(&out)

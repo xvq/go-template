@@ -24,7 +24,7 @@ func UseCore(t *testing.T, c config.Config, db *gorm.DB, redis *redis.Client, lo
 	core.HTTP, core.Queue = nil, nil
 	core.Session = nil
 	if redis != nil {
-		core.Session = session.New(redis, c.Redis.Prefix)
+		core.Session = session.New(redis)
 	}
 	t.Cleanup(func() {
 		core.Config, core.DB, core.Redis = previousConfig, previousDB, previousRedis

@@ -56,7 +56,6 @@ func TestFailedOpenDoesNotPublishAndCanRetry(t *testing.T) {
 	mr := miniredis.RunT(t)
 	c := config.Defaults()
 	c.Redis.Address = mr.Addr()
-	c.Redis.Prefix = "session-test"
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := Open(ctx, c, Options{Name: "test", HTTP: true, Redis: true}); err == nil {
@@ -77,12 +76,12 @@ func TestFailedOpenDoesNotPublishAndCanRetry(t *testing.T) {
 	if core.Session == nil {
 		t.Fatal("Redis initialization did not prepare the shared session store")
 	}
-	token, _, err := core.Session.Issue(context.Background(), "admin", 7, 1, time.Hour, true)
+	token, _, err := core.Session.Issue(context.Background(), "admin", 7, time.Hour, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !mr.Exists(c.Redis.Prefix + ":auth:session:" + session.Hash(token)) {
-		t.Fatal("session store did not use the shared Redis and configured prefix")
+	if !mr.Exists("auth:session:" + session.Hash(token)) {
+		t.Fatal("session store did not use the shared Redis")
 	}
 	identity, err := core.Session.Validate(context.Background(), token)
 	if err != nil || identity.SubjectID != 7 || identity.Realm != "admin" {

@@ -12,7 +12,7 @@ import (
 )
 
 func TestAdminPublicFields(t *testing.T) {
-	result := AdminResource.Item(&model.Admin{ID: 7, Username: "admin", PasswordHash: "secret", AuthVersion: 9})
+	result := AdminResource.Item(&model.Admin{ID: 7, Username: "admin", PasswordHash: "secret"})
 	raw, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -48,23 +48,27 @@ func TestEmptyPageKeepsTotal(t *testing.T) {
 	}
 }
 
-func TestSettingsSensitiveValueAndJSONTypes(t *testing.T) {
+func TestSettingsValuesDefaultsAndJSONTypes(t *testing.T) {
 	entries := []settings.Entry{
-		{Key: "secret", Type: "string", Sensitive: true, Value: json.RawMessage(`"private"`)},
-		{Key: "enabled", Type: "boolean", Value: json.RawMessage(`false`)},
+		{Key: "enabled", Type: "boolean", Value: json.RawMessage(`false`), Default: json.RawMessage(`true`)},
+		{Key: "count", Type: "integer", Value: json.RawMessage(`20`), Default: json.RawMessage(`10`)},
+		{Key: "extensions", Type: "string_array", Value: json.RawMessage(`[]`), Default: json.RawMessage(`["jpg","png"]`)},
 	}
+
 	out := SettingResource.Collection(entries)
 	raw, err := json.Marshal(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != `[{"key":"secret","type":"string","sensitive":true},{"key":"enabled","type":"boolean","value":false,"sensitive":false}]` {
+	if string(raw) != `[{"key":"enabled","type":"boolean","value":false,"default":true},{"key":"count","type":"integer","value":20,"default":10},{"key":"extensions","type":"string_array","value":[],"default":["jpg","png"]}]` {
 		t.Fatalf("unexpected settings: %s", raw)
 	}
-	out[1].Value[0] = 'x'
-	if !reflect.DeepEqual(entries[1].Value, json.RawMessage(`false`)) {
+	out[0].Value[0] = 'x'
+	out[2].Default[0] = 'x'
+	if !reflect.DeepEqual(entries[0].Value, json.RawMessage(`false`)) || !reflect.DeepEqual(entries[2].Default, json.RawMessage(`["jpg","png"]`)) {
 		t.Fatal("resource mutated source")
 	}
+
 }
 
 func TestLoginLogUnknownAdmin(t *testing.T) {

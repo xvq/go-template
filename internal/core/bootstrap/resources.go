@@ -95,7 +95,7 @@ func Open(ctx context.Context, c config.Config, options Options) (*Resources, er
 			return fail(err)
 		}
 		r.closers = append(r.closers, redisConn.Close)
-		sessions = session.New(redisConn, c.Redis.Prefix)
+		sessions = session.New(redisConn)
 	}
 	if options.HTTP {
 		http = httpclient.New(c.HTTPClient)

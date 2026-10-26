@@ -43,10 +43,9 @@ return n
 `)
 
 func LoginLimit() fiber.Handler {
-	prefix := core.Config.Redis.Prefix
 	limit, window := core.Config.Auth.Admin.LoginLimit, core.Config.Auth.Admin.LoginWindow
 	return func(c fiber.Ctx) error {
-		n, err := loginLimitScript.Run(c.Context(), core.Redis, []string{prefix + ":login-limit:" + c.IP()}, window.Milliseconds()).Int()
+		n, err := loginLimitScript.Run(c.Context(), core.Redis, []string{"login-limit:" + c.IP()}, window.Milliseconds()).Int()
 		if err != nil {
 			return err
 		}

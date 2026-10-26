@@ -7,6 +7,7 @@ func Register(path *string) []*cobra.Command {
 	return []*cobra.Command{
 		newAdminCreate(path),
 		newQueueExample(path),
+		newSettingsClearCache(path),
 		newHello(),
 	}
 }

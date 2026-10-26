@@ -1,34 +1,38 @@
 package middleware
 
 import (
+	"errors"
 	"github.com/gofiber/fiber/v3"
-	"github.com/xvq/go-template/internal/app/admin/service"
 	"github.com/xvq/go-template/internal/apperror"
-	"github.com/xvq/go-template/internal/model"
-	"strings"
+	"github.com/xvq/go-template/internal/core"
+	"github.com/xvq/go-template/internal/core/infrastructure/session"
+	"github.com/xvq/go-template/internal/core/request"
 )
 
 type identityKey struct{}
 
-func Token(c fiber.Ctx) string {
-	parts := strings.Fields(c.Get("Authorization"))
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return ""
-	}
-	return parts[1]
-}
-func Auth(s *service.AdminService) fiber.Handler {
+func Auth() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		token := Token(c)
+		token := request.Token(c)
 		if token == "" {
 			return apperror.ErrUnauthorized
 		}
-		a, err := s.Authenticate(c.Context(), token)
+		identity, err := core.Session.Validate(c.Context(), token)
+		if errors.Is(err, session.ErrInvalid) {
+			return apperror.ErrUnauthorized
+		}
 		if err != nil {
 			return err
 		}
-		c.Locals(identityKey{}, a)
+		if identity.Realm != "admin" {
+			return apperror.ErrUnauthorized
+		}
+		c.Locals(identityKey{}, identity.SubjectID)
 		return c.Next()
 	}
 }
-func Current(c fiber.Ctx) *model.Admin { a, _ := c.Locals(identityKey{}).(*model.Admin); return a }
+
+func CurrentID(c fiber.Ctx) uint64 {
+	id, _ := c.Locals(identityKey{}).(uint64)
+	return id
+}

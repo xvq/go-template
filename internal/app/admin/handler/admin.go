@@ -26,16 +26,20 @@ func (h *Admin) Login(c fiber.Ctx, req *adminrequest.Login) error {
 	})
 }
 func (h *Admin) Logout(c fiber.Ctx) error {
-	if err := h.service.Logout(c.Context(), middleware.Token(c)); err != nil {
+	if err := h.service.Logout(c.Context(), request.Token(c)); err != nil {
 		return err
 	}
 	return response.OK(c, nil)
 }
 func (h *Admin) Me(c fiber.Ctx) error {
-	return response.OK(c, resource.AdminResource.Item(middleware.Current(c)))
+	out, err := h.service.Get(c.Context(), middleware.CurrentID(c))
+	if err != nil {
+		return err
+	}
+	return response.OK(c, resource.AdminResource.Item(&out))
 }
 func (h *Admin) ChangePassword(c fiber.Ctx, req *adminrequest.ChangePassword) error {
-	if err := h.service.ChangePassword(c.Context(), middleware.Current(c).ID, req.CurrentPassword, req.Password); err != nil {
+	if err := h.service.ChangePassword(c.Context(), middleware.CurrentID(c), req.CurrentPassword, req.Password); err != nil {
 		return err
 	}
 	return response.OK(c, nil)

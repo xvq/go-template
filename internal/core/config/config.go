@@ -20,7 +20,6 @@ type Config struct {
 	Database   Database   `yaml:"database"`
 	Redis      Redis      `yaml:"redis"`
 	Auth       Auth       `yaml:"auth"`
-	Settings   Settings   `yaml:"settings"`
 	HTTPClient HTTPClient `yaml:"http_client"`
 	Schedule   Schedule   `yaml:"schedule"`
 	Queue      Queue      `yaml:"queue"`
@@ -67,7 +66,6 @@ type Redis struct {
 	Username string        `yaml:"username"`
 	Password string        `yaml:"password"`
 	DB       int           `yaml:"db"`
-	Prefix   string        `yaml:"prefix"`
 	Timeout  time.Duration `yaml:"timeout"`
 }
 type Auth struct {
@@ -78,9 +76,6 @@ type Session struct {
 	AllowMultipleSessions bool          `yaml:"allow_multiple_sessions"`
 	LoginLimit            int           `yaml:"login_limit"`
 	LoginWindow           time.Duration `yaml:"login_window"`
-}
-type Settings struct {
-	CacheTTL time.Duration `yaml:"cache_ttl"`
 }
 type HTTPClient struct {
 	Timeout             time.Duration `yaml:"timeout"`
@@ -117,9 +112,8 @@ func Defaults() Config {
 		Server:     Server{Host: "127.0.0.1", Port: 8080, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, RequestTimeout: 30 * time.Second, ShutdownTimeout: 15 * time.Second, BodyLimit: 4 << 20},
 		Log:        Log{Level: "info", Output: "stdout", Dir: "logs", MaxSizeMB: 100, MaxBackups: 7, MaxAgeDays: 14, Compress: true},
 		Database:   Database{Host: "127.0.0.1", Port: 3306, MaxOpenConns: 30, MaxIdleConns: 10, ConnMaxLifetime: 30 * time.Minute, ConnectTimeout: 5 * time.Second, IOTimeout: 30 * time.Second, SlowQuery: 500 * time.Millisecond},
-		Redis:      Redis{Address: "127.0.0.1:6379", Prefix: "go-template", Timeout: 3 * time.Second},
+		Redis:      Redis{Address: "127.0.0.1:6379", Timeout: 3 * time.Second},
 		Auth:       Auth{Admin: Session{TokenTTL: 24 * time.Hour, AllowMultipleSessions: true, LoginLimit: 10, LoginWindow: time.Minute}},
-		Settings:   Settings{CacheTTL: time.Minute},
 		HTTPClient: HTTPClient{Timeout: 30 * time.Second, ConnectTimeout: 5 * time.Second, MaxIdleConns: 100, MaxIdleConnsPerHost: 10, IdleConnTimeout: 90 * time.Second},
 		Schedule:   Schedule{Timezone: "Asia/Shanghai", ShutdownTimeout: 15 * time.Second},
 		Queue:      Queue{Concurrency: 10, DefaultQueue: "default", MaxRetry: 3, TaskTimeout: 5 * time.Minute, ShutdownTimeout: 15 * time.Second, Queues: map[string]int{"default": 1}},
@@ -167,7 +161,7 @@ func (c Config) Validate(parts ...string) error {
 				return fmt.Errorf("database 配置缺失或无效")
 			}
 		case "redis":
-			if c.Redis.Address == "" || c.Redis.DB < 0 || c.Redis.Timeout <= 0 || strings.TrimSpace(c.Redis.Prefix) == "" {
+			if c.Redis.Address == "" || c.Redis.DB < 0 || c.Redis.Timeout <= 0 {
 				return fmt.Errorf("redis 配置无效")
 			}
 		case "server":
@@ -176,8 +170,8 @@ func (c Config) Validate(parts ...string) error {
 				return fmt.Errorf("server 配置无效")
 			}
 			a := c.Auth.Admin
-			if a.TokenTTL < time.Second || a.LoginLimit < 1 || a.LoginWindow < time.Second || c.Settings.CacheTTL < time.Second {
-				return fmt.Errorf("auth/settings 配置无效")
+			if a.TokenTTL < time.Second || a.LoginLimit < 1 || a.LoginWindow < time.Second {
+				return fmt.Errorf("auth 配置无效")
 			}
 		case "http_client":
 			h := c.HTTPClient
