@@ -98,16 +98,17 @@ internal/
   app/web/               网站端路由扩展入口，不预设用户业务
   core/                  框架层与全局资源入口
     core.go              全局 Config、DB、Redis、Session、Log、HTTP、Queue
-    bootstrap/           按命令初始化公共资源、服务生命周期
+    bootstrap/           公共资源初始化、服务生命周期；dependencies.go 集中声明三个框架进程的资源依赖
     config/              YAML 配置与按命令校验
     infrastructure/      DB、Redis、日志、HTTP 客户端、会话、队列
       cli/               根命令、服务启动、迁移与配置生成
       scheduler/         定时任务类型与调度运行机制
+    middleware/          register.go 注册公共中间件；请求上下文、超时与访问日志
+    route/               register.go 集中注册 admin、web 等应用路由
     request/             路由绑定校验包装、ID、分页与 Token 提取
     response/            响应信封、错误转换、流式输出
     resource/            单个可选模型、集合、分页的通用输出转换
     testutil/            全局资源测试辅助
-  middleware/            请求上下文、访问日志、登录限流
   apperror/              公共错误定义
   service/settings/      系统设置能力；其他公共能力各建子目录
   util/
@@ -116,7 +117,7 @@ internal/
   model/                 GORM 数据模型与关联
   command/               业务命令及显式注册
   schedule/              具体定时任务及显式注册
-  job/                   队列任务
+  job/                   具体队列任务及 register.go 显式注册
 migrations/              编译进程序的 SQL
 integration/             独立测试数据库上的真实联调
 docs/                    API、扩展方法、部署说明

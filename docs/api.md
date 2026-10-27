@@ -25,7 +25,7 @@
 }
 ```
 
-400 格式/参数错误；401 未登录或凭证错误；404 不存在；409 账号重复或最后管理员保护；429 登录限流；500 内部故障；503 服务未就绪；504 处理超时。500 响应不暴露底层数据库和 Redis 错误。
+400 格式/参数错误；401 未登录或凭证错误；404 不存在；409 用户名重复（code: username_exists）或最后管理员保护；429 登录限流；500 内部故障；503 服务未就绪；504 处理超时。500 响应不暴露底层数据库和 Redis 错误。
 
 列表参数 `page` 默认 1、最大 1000000；`page_size` 默认 20、最大 100，均需为正整数。非整数或超出范围返回 HTTP 400、`code: invalid_pagination`。分页结果放在统一响应的 `data` 内，结构为 `data + pagination`：
 
@@ -60,7 +60,7 @@
 | GET | `/admins` | 分页列表 |
 | POST | `/admins` | `username`, `password`, 可选 `display_name`, `enabled`（默认 true）；HTTP 201 |
 | GET | `/admins/:id` | 管理员详情 |
-| PATCH | `/admins/:id` | 完整表单：`display_name`、`enabled` 都必填；名称不能为空；不允许修改 username |
+| PUT | `/admins/:id` | 完整表单：`display_name`、`enabled` 都必填；名称不能为空；不允许修改 username |
 | DELETE | `/admins/:id` | 删除管理员，撤销会话 |
 | PUT | `/admins/:id/password` | `password`；重置密码，撤销其全部会话 |
 | GET | `/login-logs` | 分页查询登录日志 |

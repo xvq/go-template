@@ -202,7 +202,7 @@ func TestAdminAPISettingsAndMigrations(t *testing.T) {
 		t.Fatalf("out-of-range admin page lost total: %v", empty)
 	}
 	call(t, app, "POST", "/api/admin/admins", token, `{"username":"second","password":"secure-password"}`, 409)
-	call(t, app, "PATCH", fmt.Sprintf("/api/admin/admins/%d", id), token, `{"display_name":"第二个管理员","enabled":false}`, 200)
+	call(t, app, "PUT", fmt.Sprintf("/api/admin/admins/%d", id), token, `{"display_name":"第二个管理员","enabled":false}`, 200)
 	call(t, app, "GET", "/api/admin/me", secondToken, "", 401)
 	settingsList := call(t, app, "GET", "/api/admin/settings", token, "", 200)
 	firstSetting := settingsList["data"].([]any)[0].(map[string]any)

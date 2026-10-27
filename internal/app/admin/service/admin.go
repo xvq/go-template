@@ -201,7 +201,7 @@ func mapDBError(err error) error {
 		return apperror.ErrNotFound
 	}
 	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return apperror.ErrConflict
+		return apperror.ErrUsernameExists
 	}
 	return err
 }

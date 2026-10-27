@@ -31,7 +31,7 @@ func TestBindingAndValidationBeforeHandler(t *testing.T) {
 	app.Post("/body", request.Body(h))
 	app.Post("/json", request.JSON(h))
 	app.Post("/form", request.Form(h))
-	app.Patch("/update", request.JSON(func(c fiber.Ctx, r *adminrequest.UpdateAdmin) error {
+	app.Put("/update", request.JSON(func(c fiber.Ctx, r *adminrequest.UpdateAdmin) error {
 		calls++
 		return c.JSON(*r.Enabled)
 	}))
@@ -61,7 +61,7 @@ func TestBindingAndValidationBeforeHandler(t *testing.T) {
 		before := calls
 		method := "POST"
 		if tc.path == "/update" {
-			method = "PATCH"
+			method = "PUT"
 		}
 		if strings.HasPrefix(tc.path, "/query") {
 			method = "GET"

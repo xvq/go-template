@@ -9,15 +9,12 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/cors"
-	"github.com/gofiber/fiber/v3/middleware/recover"
-	"github.com/xvq/go-template/internal/app/admin"
-	"github.com/xvq/go-template/internal/app/web"
 	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/core/config"
 	"github.com/xvq/go-template/internal/core/infrastructure/validator"
+	"github.com/xvq/go-template/internal/core/middleware"
 	"github.com/xvq/go-template/internal/core/response"
-	"github.com/xvq/go-template/internal/middleware"
+	"github.com/xvq/go-template/internal/core/route"
 )
 
 // NewServer uses the globals initialized by Open.
@@ -34,11 +31,7 @@ func NewServer(ctx context.Context) (*fiber.App, error) {
 		fiberConfig.ProxyHeader = "X-Forwarded-For"
 	}
 	app := fiber.New(fiberConfig)
-	app.Use(middleware.RequestLifecycle(ctx, errors))
-	app.Use(recover.New(recover.Config{PanicHandler: response.PanicHandler}))
-	if len(c.Server.CORSOrigins) > 0 {
-		app.Use(cors.New(cors.Config{AllowOrigins: c.Server.CORSOrigins, AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}, AllowHeaders: []string{"Authorization", "Content-Type"}, ExposeHeaders: []string{"X-Request-ID"}}))
-	}
+	middleware.Register(app, ctx, errors)
 	app.Get("/health/live", func(c fiber.Ctx) error { return response.OK(c, fiber.Map{"status": "ok"}) })
 	app.Get("/health/ready", func(c fiber.Ctx) error {
 		check, cancel := context.WithTimeout(c.Context(), 2*time.Second)
@@ -52,21 +45,14 @@ func NewServer(ctx context.Context) (*fiber.App, error) {
 		}
 		return response.OK(c, fiber.Map{"status": "ready"})
 	})
-	if err := admin.Register(app); err != nil {
+	if err := route.Register(app); err != nil {
 		return nil, err
 	}
-	web.Register(app)
 	return app, nil
 }
 
 func RunServer(ctx context.Context, c config.Config) error {
-	r, err := Open(ctx, c, Options{
-		Name:     "server",
-		Database: true,
-		Redis:    true,
-		HTTP:     true,
-		Queue:    c.Queue.Enabled,
-	})
+	r, err := Open(ctx, c, ServerOptions(c))
 	if err != nil {
 		return err
 	}

@@ -18,7 +18,7 @@ func newSchedule(path *string) *cobra.Command {
 		if err := c.Validate("schedule"); err != nil {
 			return err
 		}
-		r, err := bootstrap.Open(cmd.Context(), c, bootstrap.Options{Name: "schedule"})
+		r, err := bootstrap.Open(cmd.Context(), c, bootstrap.ScheduleOptions())
 		if err != nil {
 			return err
 		}

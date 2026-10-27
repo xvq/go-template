@@ -15,7 +15,7 @@
 
 ```go
 // routes.go：request 是公共包，adminrequest 是应用请求包。
-api.Post("/login", commonmiddleware.LoginLimit(), request.JSON(h.Login))
+api.Post("/login", middleware.LoginLimit(), request.JSON(h.Login))
 
 // handler：不再手动绑定或调用校验器。
 func (h *Admin) Login(c fiber.Ctx, req *adminrequest.Login) error {
@@ -41,6 +41,10 @@ type Login struct {
 ID、分页、Bearer Token 通过 request.ID(c)、request.Pagination(c)、request.Token(c) 在需要时读取，不使用全局参数中间件或自定义 Context。request.Token 仅提取 Authorization 请求头中的 Bearer Token，缺失或格式错误返回空字符串；会话和账号有效性仍由 Auth 中间件及 service 验证。
 
 ## 公共资源与生命周期
+
+应用路由统一在 `internal/core/route/register.go` 的 `Register(app)` 中显式登记，当前依次注册 admin、web。新增应用时在这里添加注册调用；具体服务和 handler 的组装仍留在应用自己的 `routes.go`。bootstrap 在全局中间件与健康检查注册后调用该入口，并传播注册错误。
+
+公共中间件统一在 `internal/core/middleware/register.go` 的 `Register(app, ctx, onError)` 中显式注册，顺序为请求生命周期、panic 恢复、按配置启用的 CORS，bootstrap 在注册任何路由前调用该入口。请求生命周期实现位于同目录的 `request_lifecycle.go`，负责 context、超时、请求 ID 和访问日志；管理员认证和登录限流位于 `internal/app/admin/middleware`，继续在管理员路由中按需使用。
 
 框架代码统一收在 `internal/core`：`bootstrap` 管理启动与清理，`config` 管理配置，`infrastructure` 提供底层实现，`testutil` 提供测试辅助，`request/response/resource` 提供公共 HTTP 请求、响应和资源转换能力；根包 `core` 保留全局资源入口。子目录各自是独立 Go 包，不会自动引用父包。底层工厂和配置包不反向依赖 core，避免循环引用。
 
@@ -121,6 +125,8 @@ handler 使用 `resource.AdminResource.Page(result)` 转换，resource 不查询
 
 ## 数据库
 
+数据库模型放在 `internal/model`，一个模型一个文件，按表名单数命名，例如 admin.go、admin_login_log.go、setting.go；所有文件继续属于 model 包。
+
 数据库日期时间统一使用 UTC、秒精度 `DATETIME`；Go 模型使用 `time.Time`，GORM 自动时间在写入前截断到秒，避免数据库舍入和创建响应携带小数。API 时间使用 UTC RFC3339 秒精度。Redis 会话的 `created_at`、`expires_at` 和索引分数统一使用 Unix 秒时间戳，使用 `EXAT` / `EXPIREAT` 按同一到期时刻清理会话与索引；会话有效期不足整秒的部分截去。耗时、超时等 duration 不受此约定影响。
 
 `core.DB.WithContext(ctx)` 传递超时/取消。service 决定事务边界：
@@ -186,7 +192,7 @@ Fiber 基于 fasthttp：不要假定浏览器断开会像 net/http 一样立即�
 
 ## 队列
 
-在 `internal/job/` 定义任务类型、JSON 参数和处理函数，在 `job.Register()` 登记。直接使用公共投递客户端：
+在 `internal/job/` 为每个任务创建独立文件，定义任务类型、JSON 参数和处理函数，在 `internal/job/register.go` 的 `Register()` 显式登记。示例处理函数放在 `example.go`；删除示例时同时移除对应注册项，保留注册入口。直接使用公共投递客户端：
 
 ```go
 info, err := core.Queue.Enqueue(ctx, "mail:send", payload,
@@ -200,7 +206,7 @@ info, err := core.Queue.Enqueue(ctx, "mail:send", payload,
 
 模板只负责基础设施，不实现业务幂等、事务 outbox 或补偿。任务可能重复执行，项目按业务需要处理。会话、限流、设置缓存和 Asynq 使用固定用途的键名，跨项目通过独立 Redis DB/实例隔离。
 
-任务需要数据库等依赖时，在 `internal/core/infrastructure/cli/queue_work.go` 的 `bootstrap.Options` 启用所需资源，任务直接使用 `core.DB` 等公共资源。默认示例只需日志，因此 queue:work 不要求 MySQL。
+任务需要数据库等依赖时，在 `internal/core/bootstrap/dependencies.go` 的 `QueueWorkOptions()` 启用所需资源，任务直接使用 `core.DB` 等公共资源。默认示例只需日志，因此 queue:work 不要求 MySQL。
 
 ## 定时任务
 
@@ -210,7 +216,7 @@ info, err := core.Queue.Enqueue(ctx, "mail:send", payload,
 
 cron 使用五段表达式（分钟粒度），也支持 `@every 30s`。同一进程内同一任务上次未结束时跳过本次，异常被记录；不存在跨进程分布式锁，因此只运行一个 schedule 进程。
 
-需要投递任务时，让 schedule 命令设置 `bootstrap.Options.Queue` 按配置启用队列资源，任务直接调用 `core.Queue.Enqueue`；需要数据库时同理设置 `Database: true`。初始化失败要返回错误，不要静默跳过。
+需要投递任务时，在 `internal/core/bootstrap/dependencies.go` 的 `ScheduleOptions()` 设置 `Queue: true`，队列资源是否启用仍由 `queue.enabled` 决定，任务直接调用 `core.Queue.Enqueue`；需要数据库时同理设置 `Database: true`。初始化失败要返回错误，不要静默跳过。
 
 ## 自定义命令
 
@@ -220,7 +226,9 @@ cron 使用五段表达式（分钟粒度），也支持 `@every 30s`。同一�
 
 新增命令时在自己的文件提供 `newXxx() *cobra.Command` 构造函数，再加入 `command.Register` 返回的列表。需要配置路径时接收 `path *string`，在 RunE 执行时读取 `*path`，以获得解析后的 `--config` 参数。构造函数只定义命令及参数，资源初始化和清理留在命令执行逻辑中；不使用 `init()` 自动注册。仅该命令使用的辅助函数也留在对应文件，例如管理员密码读取。
 
-命令依赖在命令自己的执行代码中声明，不在 root.go 建立另一份清单。例如同时使用数据库和 Redis：
+server、schedule、queue:work 三个框架进程的资源依赖集中在 `internal/core/bootstrap/dependencies.go`，分别由 `ServerOptions(c)`、`ScheduleOptions()`、`QueueWorkOptions()` 返回。ServerOptions 接收已加载的配置，根据 `c.Queue.Enabled` 选择 Queue；这些函数不读取配置文件、不连接资源，初始化和清理仍在原启动流程中执行。新增定时任务或队列任务需要额外资源时，修改对应函数。
+
+业务命令的依赖继续在命令自己的执行代码中声明，不在 root.go 建立另一份清单。例如同时使用数据库和 Redis：
 
 ```go
 c, err := config.Load(*path)

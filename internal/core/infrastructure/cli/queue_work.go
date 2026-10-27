@@ -15,7 +15,7 @@ func newQueueWork(path *string) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		r, err := bootstrap.Open(cmd.Context(), c, bootstrap.Options{Name: "queue:work", Queue: true})
+		r, err := bootstrap.Open(cmd.Context(), c, bootstrap.QueueWorkOptions())
 		if err != nil {
 			return err
 		}

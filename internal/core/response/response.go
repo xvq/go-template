@@ -41,8 +41,8 @@ func ErrorHandler() fiber.ErrorHandler {
 			status, code, message = 401, "unauthorized", apperror.ErrCredentials.Error()
 		case errors.Is(err, apperror.ErrNotFound):
 			status, code, message = 404, "not_found", apperror.ErrNotFound.Error()
-		case errors.Is(err, apperror.ErrConflict):
-			status, code, message = 409, "conflict", apperror.ErrConflict.Error()
+		case errors.Is(err, apperror.ErrUsernameExists):
+			status, code, message = 409, "username_exists", apperror.ErrUsernameExists.Error()
 		case errors.Is(err, apperror.ErrLastAdmin):
 			status, code, message = 409, "last_admin", apperror.ErrLastAdmin.Error()
 		case errors.Is(err, apperror.ErrInvalidSetting):
