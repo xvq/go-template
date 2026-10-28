@@ -14,7 +14,7 @@ func TestExampleAndScopedValidation(t *testing.T) {
 	if err = c.Validate("server", "database", "redis", "http_client", "schedule"); err != nil {
 		t.Fatal(err)
 	}
-	if c.Auth.Admin.TokenTTL != 24*time.Hour || !c.Auth.Admin.AllowMultipleSessions || c.Queue.Enabled {
+	if c.Auth.Admin.TokenTTL != 24*time.Hour || !c.Auth.Admin.AllowMultipleSessions || c.Queue.Enabled || c.App.Timezone != "Asia/Hong_Kong" {
 		t.Fatal("wrong example defaults")
 	}
 	c.Database.Database = ""
@@ -27,6 +27,30 @@ func TestExampleAndScopedValidation(t *testing.T) {
 	}
 	if c.Validate("queue") == nil {
 		t.Fatal("disabled queue accepted")
+	}
+}
+
+func TestApplicationTimezone(t *testing.T) {
+	for _, zone := range []string{"Asia/Hong_Kong", "America/New_York", "UTC"} {
+		c := Defaults()
+		c.App.Timezone = zone
+		loc, err := c.App.Location()
+		if err != nil || loc.String() != zone {
+			t.Fatalf("timezone %s: %v %v", zone, loc, err)
+		}
+		if err := c.Validate("schedule"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, zone := range []string{"", "Local", "invalid/timezone"} {
+		c := Defaults()
+		c.App.Timezone = zone
+		if c.Validate() == nil || c.Validate("server") == nil || c.Validate("schedule") == nil {
+			t.Fatalf("invalid shared timezone accepted: %q", zone)
+		}
+	}
+	if _, err := Parse([]byte("schedule:\n  timezone: UTC\n")); err == nil {
+		t.Fatal("removed schedule.timezone accepted")
 	}
 }
 func TestStrictConfigAndFalseValues(t *testing.T) {

@@ -29,6 +29,17 @@ func SettingDefinitions() []SettingDefinition {
 
 // validate enforces the declared JSON type before any setting-specific rules.
 func (d SettingDefinition) validate(raw json.RawMessage) error {
+	if err := d.validateType(raw); err != nil {
+		return err
+	}
+	if d.Validate != nil {
+		return d.Validate(raw)
+	}
+	return nil
+}
+
+// validateType checks cached values without rerunning setting-specific rules.
+func (d SettingDefinition) validateType(raw json.RawMessage) error {
 	valid := false
 	switch d.Type {
 	case "string":
@@ -54,9 +65,6 @@ func (d SettingDefinition) validate(raw json.RawMessage) error {
 	}
 	if !valid {
 		return apperror.ErrInvalidSetting
-	}
-	if d.Validate != nil {
-		return d.Validate(raw)
 	}
 	return nil
 }

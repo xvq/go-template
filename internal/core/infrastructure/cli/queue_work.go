@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/core/bootstrap"
@@ -21,9 +23,12 @@ func newQueueWork(path *string) *cobra.Command {
 		}
 		defer r.Close()
 		srv := taskqueue.NewServer(c, core.Log)
-		if err = srv.Start(job.Register()); err != nil {
+		mux, count := job.Register()
+		if err = srv.Start(mux); err != nil {
 			return err
 		}
+		core.Log.Info("queue worker started", "task_types", count, "concurrency", c.Queue.Concurrency)
+		fmt.Fprintf(cmd.ErrOrStderr(), "Queue Worker started, registered task types: %d, concurrency: %d\n", count, c.Queue.Concurrency)
 		<-cmd.Context().Done()
 		srv.Shutdown()
 		return nil

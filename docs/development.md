@@ -40,6 +40,43 @@ type Login struct {
 
 ID、分页、Bearer Token 通过 request.ID(c)、request.Pagination(c)、request.Token(c) 在需要时读取，不使用全局参数中间件或自定义 Context。request.Token 仅提取 Authorization 请求头中的 Bearer Token，缺失或格式错误返回空字符串；会话和账号有效性仍由 Auth 中间件及 service 验证。
 
+### 时间输入与统一时区
+
+`app.timezone` 是业务日期范围等计算与 cron 调度的统一时区，默认 `Asia/Hong_Kong`；使用明确的 IANA 名称或 `UTC`，不使用系统相关的 `Local`。配置执行校验会检查该值，help 不加载配置；数据库会话和写入、API 时间输出继续使用 UTC，不改变进程的 `time.Local`。
+
+应用请求中的时间字段直接使用标准 `time.Time`（可选字段使用 `*time.Time`）。JSON、Query、Form 及 Body 包装器利用标准类型的 UnmarshalText/UnmarshalJSON 原生解析 RFC3339，再执行 validator，无需自定义类型、转换方法或扫描结构体。
+
+只接受带明确偏移或 Z 的 RFC3339，例如 `2026-10-28T00:00:00+08:00`、`2026-10-27T16:00:00Z`，允许小数秒。不接受 `2026-10-28 00:00:00` 或纯日期，不按 `app.timezone` 补全缺失时区；客户端负责选择时区并明确表达时间点。
+
+绑定保留输入的时间偏移，不额外归一化；标准时间比较按实际时刻进行，不受表示偏移影响。非法格式或日期返回 HTTP 400，必填或时间顺序不符返回 HTTP 422。未传的可选字段为 nil，JSON null 同样表示 nil；空字符串不是未传，返回 400。通过 URL 查询或表单传入偏移时，用标准参数编码工具编码，避免 `+` 被解释为空格。MySQL 驱动使用现有连接的 UTC location 编码时间参数，故带偏移的标准时间可以直接传给查询工具；资源输出仍显式遵守 UTC 约定。
+
+```go
+// 应用 request：示例要求起止时间都提供，并校验结束晚于开始。
+type ListLoginLogs struct {
+    Start *time.Time `json:"start" query:"start" label:"开始时间" validate:"required"`
+    End   *time.Time `json:"end" query:"end" label:"结束时间" validate:"required,gtfield=Start"`
+}
+
+// handler：直接传递标准 *time.Time，不需要类型转换。
+filter := service.LoginLogFilter{
+    Start: req.Start,
+    End:   req.End,
+}
+
+// service 只接收标准时间，不依赖 request 包。
+type LoginLogFilter struct {
+    Start *time.Time
+    End   *time.Time
+}
+
+db.Scopes(
+    query.GreaterOrEqual("created_at", filter.Start),
+    query.LessThan("created_at", filter.End),
+)
+```
+
+筛选使用包含开始、不包含结束的范围。输入绑定不自动计算今日/本周/本月等业务范围，也不自动为现有 API 增加时间筛选参数。
+
 ## 公共资源与生命周期
 
 应用路由统一在 `internal/core/route/register.go` 的 `Register(app)` 中显式登记，当前依次注册 admin、web。新增应用时在这里添加注册调用；具体服务和 handler 的组装仍留在应用自己的 `routes.go`。bootstrap 在全局中间件与健康检查注册后调用该入口，并传播注册错误。
@@ -104,6 +141,47 @@ base 是 internal/core/resource 的导入别名。Item/Collection/Page 统一由
 
 resource 只转换已经加载的数据，不查询数据库、不触发懒加载；关联需要在 service 里用 Preload 等方式提前加载。公开字段显式列出，密码哈希等内部字段不进入响应。
 
+## 可选筛选条件
+
+`internal/util/query/filter.go` 提供可组合的原生 GORM Scope，只追加条件、不执行查询、不依赖 HTTP 或 core。字段名由 service 在代码中指定，支持 `table.column` 或表别名前缀，按标识符引用；不接受 SQL 表达式或前端指定的任意字段。条件值使用参数绑定。
+
+| 工具 | 条件 | 跳过规则 |
+| --- | --- | --- |
+| Search(keyword, columns...) | 多个文本字段的 OR 子串搜索，整组加括号 | 关键词 TrimSpace 后为空，或未提供字段 |
+| Equal(column, value) | 等于 | 指针为 nil |
+| In(column, values) | 集合成员匹配 | 切片为 nil 或长度为 0 |
+| GreaterThan(column, value) | 大于 | 指针为 nil |
+| GreaterOrEqual(column, value) | 大于等于 | 指针为 nil |
+| LessThan(column, value) | 小于 | 指针为 nil |
+| LessOrEqual(column, value) | 小于等于 | 指针为 nil |
+
+Equal 和比较工具接受类型化指针，保留 0、false、空字符串等已传值。In 接受类型化切片，空集合表示不启用这个可选筛选，不应用于必须限制访问范围的权限集合。Search 将 `%`、`_` 和转义字符 `!` 当作普通输入，使用显式 `ESCAPE '!'`，不依赖 MySQL 的反斜杠转义模式；搜索大小写行为由字段排序规则决定。
+
+例如 service 定义自己的筛选参数，再交给 Scopes：
+
+```go
+type AdminFilter struct {
+    Keyword string
+    Enabled *bool
+    IDs     []uint64
+    MinID   *uint64
+    MaxID   *uint64
+}
+
+db := core.DB.WithContext(ctx).Model(&model.Admin{}).
+    Scopes(
+        query.Search(filter.Keyword, "admins.username", "admins.display_name"),
+        query.Equal("admins.enabled", filter.Enabled),
+        query.In("admins.id", filter.IDs),
+        query.GreaterOrEqual("admins.id", filter.MinID),
+        query.LessThan("admins.id", filter.MaxID),
+    ).Order("admins.id DESC")
+
+return query.Paginate[model.Admin](db, page, size)
+```
+
+HTTP request 使用指针区分未传与零值，由匹配来源的 request 包装器绑定、校验；handler 转成 service 的筛选参数。工具不解析日期、不决定时区，也不增加排序或关联查询约定；时间比较可传入已处理好的 `*time.Time`。现有管理员列表接口的参数和行为不因新增工具自动改变。
+
 ## 分页查询
 
 普通分页调用 `internal/util/query` 的 `Paginate[T]`，统一执行 Count、Limit/Offset 查询并返回 `query.Page[T]`。例如 service：
@@ -158,9 +236,9 @@ err := core.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 内部 all 读取整份设置，List 返回按定义顺序排列的 Entry{Key,Type,Value,Default}。后台资源输出 key/type/value/default，不再有敏感值过滤机制。值和默认值均保留真实 JSON 类型，复制 RawMessage 后返回，避免调用方修改原数据。设置服务无请求状态，不缓存进程内数据，不需要创建或注入服务实例。
 
-Redis Hash `settings` 永久保存完整快照，字段名为设置 key，每个字段的值采用 JSON 编码。HGETALL 命中后校验设置项是否齐全及值是否合法；未命中或不完整时读取 MySQL，以代码默认值为基础用数据库记录覆盖，再校验和回填。默认值本身不会插入数据库，只有 Set/Update 才执行事务 upsert。Redis 不可用时回源数据库；没有初始化 Redis 时每次直接读取数据库。
+Redis Hash `settings` 永久保存完整快照，字段名为设置 key，每个字段的值采用 JSON 编码。单值 getter 先检查 key 是否已定义、getter 是否匹配定义类型，再通过 HGET 只取目标字段；命中后只检查目标值的 JSON 类型，不检查其他字段。List 使用 HGETALL 检查设置项是否齐全及所有值的 JSON 类型。两种缓存命中路径均不执行设置专用 Validate 规则，但仍拒绝 null、错误类型、非法 JSON 等值。目标字段缺失或类型无效，或列表快照不完整/类型无效时，读取整份 MySQL 数据，以代码默认值为基础用数据库记录覆盖，对默认值和数据库值执行完整类型与规则校验，再通过版本保护的 Lua 整份回填，不做单字段回填。默认值本身不会插入数据库，只有 Set/Update 才执行事务 upsert。Redis 不可用时回源数据库；没有初始化 Redis 时每次直接读取数据库。
 
-`settings:version` 是无过期时间的字符串计数器。回源前读取版本（不存在视为 0），回填 Lua 在版本相同时一次替换整个 Hash，不设置过期时间。它防止旧回源结果重新进入共享缓存，不保证已经开始的读取立刻拿到最新值。新增/删除定义导致缓存项不齐全时会重新加载；仅修改默认值但旧值仍合法时，需主动清缓存使新默认值生效。
+`settings:version` 是无过期时间的字符串计数器。回源前读取版本（不存在视为 0），回填 Lua 在版本相同时一次替换整个 Hash，不设置过期时间。它防止旧回源结果重新进入共享缓存，不保证已经开始的读取立刻拿到最新值。List 检查到新增/删除定义导致快照不齐全时会重新加载，单值读取在目标字段缺失时才重建。
 
 Set(ctx,key,value) 将 Go 值编码为 JSON 后调用 Update；Update 校验所有输入，再在 MySQL 事务中写入。提交成功后调用 ClearCache：Lua 原子递增版本并删除 Hash。ClearCache 需要已初始化 Redis，不查数据库，最多尝试 3 次、总期限 3 秒。Update 在数据库提交后脱离原请求的取消信号进行这次有界失效；最终失败返回错误，MySQL 已提交的修改不会自动回滚。不存在 TTL 自动修复机制，可修复 Redis 后执行手动清理命令。
 
@@ -192,7 +270,7 @@ Fiber 基于 fasthttp：不要假定浏览器断开会像 net/http 一样立即�
 
 ## 队列
 
-在 `internal/job/` 为每个任务创建独立文件，定义任务类型、JSON 参数和处理函数，在 `internal/job/register.go` 的 `Register()` 显式登记。示例处理函数放在 `example.go`；删除示例时同时移除对应注册项，保留注册入口。直接使用公共投递客户端：
+在 `internal/job/` 为每个任务创建独立文件，定义任务类型、JSON 参数和处理函数，在 `internal/job/register.go` 的 `Register()` 任务列表中显式登记。Register 返回 ServeMux 和列表长度，注册与启动提示的任务类型数来自同一份列表。示例处理函数放在 `example.go`；删除示例时同时移除对应注册项，保留注册入口。直接使用公共投递客户端：
 
 ```go
 info, err := core.Queue.Enqueue(ctx, "mail:send", payload,
@@ -214,7 +292,7 @@ info, err := core.Queue.Enqueue(ctx, "mail:send", payload,
 
 新增任务时在 `internal/schedule/` 创建独立文件，提供返回 `scheduler.Task` 的构造函数（例如 `newCleanup(...) scheduler.Task`），然后在 `Register` 的列表中添加 `newCleanup(...)`。具体执行逻辑留在任务自己的文件里，不使用 `init()` 自动注册。任务通过 core 访问公共基础设施，无需给 Register 或任务构造函数增加 DB/Redis/Log 参数。
 
-cron 使用五段表达式（分钟粒度），也支持 `@every 30s`。同一进程内同一任务上次未结束时跳过本次，异常被记录；不存在跨进程分布式锁，因此只运行一个 schedule 进程。
+cron 使用五段表达式（分钟粒度），也支持 `@every 30s`，统一按 `app.timezone` 调度；schedule 配置仅保留退出等待等调度配置。同一进程内同一任务上次未结束时跳过本次，异常被记录；不存在跨进程分布式锁，因此只运行一个 schedule 进程。
 
 需要投递任务时，在 `internal/core/bootstrap/dependencies.go` 的 `ScheduleOptions()` 设置 `Queue: true`，队列资源是否启用仍由 `queue.enabled` 决定，任务直接调用 `core.Queue.Enqueue`；需要数据库时同理设置 `Database: true`。初始化失败要返回错误，不要静默跳过。
 
@@ -227,6 +305,8 @@ cron 使用五段表达式（分钟粒度），也支持 `@every 30s`。同一�
 新增命令时在自己的文件提供 `newXxx() *cobra.Command` 构造函数，再加入 `command.Register` 返回的列表。需要配置路径时接收 `path *string`，在 RunE 执行时读取 `*path`，以获得解析后的 `--config` 参数。构造函数只定义命令及参数，资源初始化和清理留在命令执行逻辑中；不使用 `init()` 自动注册。仅该命令使用的辅助函数也留在对应文件，例如管理员密码读取。
 
 server、schedule、queue:work 三个框架进程的资源依赖集中在 `internal/core/bootstrap/dependencies.go`，分别由 `ServerOptions(c)`、`ScheduleOptions()`、`QueueWorkOptions()` 返回。ServerOptions 接收已加载的配置，根据 `c.Queue.Enabled` 选择 Queue；这些函数不读取配置文件、不连接资源，初始化和清理仍在原启动流程中执行。新增定时任务或队列任务需要额外资源时，修改对应函数。
+
+三个常驻命令在启动成功后通过 `cmd.ErrOrStderr()` 打印单行英文提示，与日志配置独立，同时保留 info 启动日志。HTTP 使用实际绑定的监听地址；Scheduler 完成任务校验、注册并启动后通过回调通知命令层；Queue Worker 在 Asynq Start 成功后打印任务类型数和配置的最大并发数，并记录 `queue worker started` 日志。启动失败不打印成功提示，help 不启动资源或打印这些提示。bootstrap 和 scheduler 通过启动回调通知命令层，不直接持有 Cobra 命令。
 
 业务命令的依赖继续在命令自己的执行代码中声明，不在 root.go 建立另一份清单。例如同时使用数据库和 Redis：
 

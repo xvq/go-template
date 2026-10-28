@@ -51,7 +51,8 @@ func NewServer(ctx context.Context) (*fiber.App, error) {
 	return app, nil
 }
 
-func RunServer(ctx context.Context, c config.Config) error {
+// RunServer calls onStarted with the bound address once HTTP serving starts.
+func RunServer(ctx context.Context, c config.Config, onStarted func(string)) error {
 	r, err := Open(ctx, c, ServerOptions(c))
 	if err != nil {
 		return err
@@ -69,8 +70,13 @@ func RunServer(ctx context.Context, c config.Config) error {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	core.Log.Info("HTTP server started", "address", addr)
-	return serve(ctx, app, ln, c.Server.ShutdownTimeout, cancel)
+	return serve(ctx, app, ln, c.Server.ShutdownTimeout, cancel, func() {
+		address := ln.Addr().String()
+		core.Log.Info("HTTP server started", "address", address)
+		if onStarted != nil {
+			onStarted(address)
+		}
+	})
 }
 
 type readyListener struct {
@@ -84,7 +90,7 @@ func (l *readyListener) Accept() (net.Conn, error) {
 	return l.Listener.Accept()
 }
 
-func serve(ctx context.Context, app *fiber.App, ln net.Listener, timeout time.Duration, cancelRequests context.CancelFunc) error {
+func serve(ctx context.Context, app *fiber.App, ln net.Listener, timeout time.Duration, cancelRequests context.CancelFunc, onStarted func()) error {
 	defer ln.Close()
 	listener := &readyListener{Listener: ln, ready: make(chan struct{})}
 	done := make(chan error, 1)
@@ -95,6 +101,9 @@ func serve(ctx context.Context, app *fiber.App, ln net.Listener, timeout time.Du
 	case <-listener.ready:
 	case err := <-done:
 		return err
+	}
+	if onStarted != nil {
+		onStarted()
 	}
 	select {
 	case err := <-done:

@@ -102,11 +102,15 @@ func TestShutdownImmediatelyAfterStart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, app, ln, time.Second, func() {}) }()
+	started := false
+	go func() { done <- serve(ctx, app, ln, time.Second, func() {}, func() { started = true }) }()
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !started {
+			t.Fatal("missing startup notification")
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("shutdown raced with listener startup")

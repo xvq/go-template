@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -147,10 +148,14 @@ func TestIncompleteCacheReloadAndRedisFallback(t *testing.T) {
 	if err := r.HSet(ctx, cacheKey, "site.name", `"Old"`).Err(); err != nil {
 		t.Fatal(err)
 	}
-	m.ExpectQuery("SELECT .*settings").WillReturnRows(sqlmock.NewRows([]string{"key", "value"}))
 	name, err := String(ctx, "site.name")
-	if err != nil || name != "Go Template" || r.HLen(ctx, cacheKey).Val() != 2 {
-		t.Fatalf("incomplete cache not reloaded: %s %v", name, err)
+	if err != nil || name != "Old" || r.HLen(ctx, cacheKey).Val() != 1 {
+		t.Fatalf("single-value hit should not reload unrelated fields: %s %v", name, err)
+	}
+	m.ExpectQuery("SELECT .*settings").WillReturnRows(sqlmock.NewRows([]string{"key", "value"}))
+	maintenance, err := Bool(ctx, "site.maintenance")
+	if err != nil || maintenance || r.HLen(ctx, cacheKey).Val() != 2 {
+		t.Fatalf("missing field did not rebuild complete cache: %v %v", maintenance, err)
 	}
 	if _, err := Int(ctx, "site.name"); !errors.Is(err, apperror.ErrInvalidSetting) {
 		t.Fatal("integer getter accepted string", err)
@@ -158,18 +163,109 @@ func TestIncompleteCacheReloadAndRedisFallback(t *testing.T) {
 	if _, err := Strings(ctx, "site.maintenance"); !errors.Is(err, apperror.ErrInvalidSetting) {
 		t.Fatal("array getter accepted bool", err)
 	}
+	if err := r.HDel(ctx, cacheKey, "site.maintenance").Err(); err != nil {
+		t.Fatal(err)
+	}
+	m.ExpectQuery("SELECT .*settings").WillReturnRows(sqlmock.NewRows([]string{"key", "value"}))
 	list, err := List(ctx)
 	if err != nil || len(list) != 2 || string(list[0].Default) != `"Go Template"` {
 		t.Fatal("list missing defaults", err)
 	}
+	if r.HLen(ctx, cacheKey).Val() != 2 {
+		t.Fatal("list did not rebuild incomplete cache")
+	}
 	mr.SetError("ERR unavailable")
 	m.ExpectQuery("SELECT .*settings").WillReturnRows(sqlmock.NewRows([]string{"key", "value"}).AddRow("site.maintenance", `true`))
-	maintenance, err := Bool(ctx, "site.maintenance")
+	maintenance, err = Bool(ctx, "site.maintenance")
 	if err != nil || !maintenance {
 		t.Fatal("database fallback failed", err)
 	}
 	if err := m.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCacheHitsSkipSettingRules(t *testing.T) {
+	db, m := mockDB(t)
+	mr := miniredis.RunT(t)
+	r := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer r.Close()
+	testutil.UseCore(t, config.Defaults(), db, r, testLogger())
+	ctx := context.Background()
+	// A previously cached string may violate a newly deployed rule. It remains
+	// readable until the cache is cleared; unrelated fields are not read by HGET.
+	if err := r.HSet(ctx, cacheKey, "site.name", `""`, "site.maintenance", `null`).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if name, err := String(ctx, "site.name"); err != nil || name != "" {
+		t.Fatalf("single-value hit reran setting rules: %q %v", name, err)
+	}
+	if err := r.HSet(ctx, cacheKey, "site.maintenance", `false`).Err(); err != nil {
+		t.Fatal(err)
+	}
+	list, err := List(ctx)
+	if err != nil || len(list) != 2 || string(list[0].Value) != `""` {
+		t.Fatalf("list hit reran setting rules: %+v %v", list, err)
+	}
+	if err := Set(ctx, "site.name", ""); !errors.Is(err, apperror.ErrInvalidSetting) {
+		t.Fatal("write skipped setting rules", err)
+	}
+	if err := ClearCache(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m.ExpectQuery("SELECT .*settings").WillReturnRows(sqlmock.NewRows([]string{"key", "value"}).AddRow("site.name", `""`))
+	if _, err := String(ctx, "site.name"); err == nil || !strings.Contains(err.Error(), "invalid stored setting") {
+		t.Fatal("database reload skipped setting rules", err)
+	}
+	if mr.Exists(cacheKey) {
+		t.Fatal("invalid database value was cached")
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInvalidCachedTypesRebuildSnapshot(t *testing.T) {
+	for _, raw := range []string{`null`, `false`, `{"name":"bad"}`, `"unterminated`} {
+		for _, whole := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/list=%v", raw, whole), func(t *testing.T) {
+				db, m := mockDB(t)
+				mr := miniredis.RunT(t)
+				r := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+				defer r.Close()
+				testutil.UseCore(t, config.Defaults(), db, r, testLogger())
+				ctx := context.Background()
+				if err := r.HSet(ctx, cacheKey, "site.name", raw, "site.maintenance", `false`).Err(); err != nil {
+					t.Fatal(err)
+				}
+				m.ExpectQuery("SELECT .*settings").WillReturnRows(sqlmock.NewRows([]string{"key", "value"}))
+				if whole {
+					if _, err := List(ctx); err != nil {
+						t.Fatal(err)
+					}
+				} else if name, err := String(ctx, "site.name"); err != nil || name != "Go Template" {
+					t.Fatalf("invalid cache accepted: %q %v", name, err)
+				}
+				if mr.HGet(cacheKey, "site.name") != `"Go Template"` || mr.HGet(cacheKey, "site.maintenance") != `false` {
+					t.Fatal("invalid cache not replaced with complete valid snapshot")
+				}
+				if err := m.ExpectationsWereMet(); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestInvalidGetterRejectedBeforeResourceAccess(t *testing.T) {
+	// No resources are needed to reject an unknown key or mismatched getter.
+	testutil.UseCore(t, config.Defaults(), nil, nil, testLogger())
+	ctx := context.Background()
+	if _, err := String(ctx, "unknown"); !errors.Is(err, apperror.ErrInvalidSetting) {
+		t.Fatal("unknown key accepted", err)
+	}
+	if _, err := Int(ctx, "site.name"); !errors.Is(err, apperror.ErrInvalidSetting) {
+		t.Fatal("wrong getter accepted", err)
 	}
 }
 

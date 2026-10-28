@@ -15,8 +15,10 @@ func (l cronLog) Info(msg string, kv ...interface{}) { l.log.Debug(msg, kv...) }
 func (l cronLog) Error(err error, msg string, kv ...interface{}) {
 	l.log.Error(msg, append(kv, "error", err)...)
 }
-func Run(ctx context.Context, c config.Schedule, log *slog.Logger, tasks []Task) error {
-	loc, err := time.LoadLocation(c.Timezone)
+
+// Run calls onStarted after all tasks have been registered and the scheduler starts.
+func Run(ctx context.Context, c config.Config, log *slog.Logger, tasks []Task, onStarted func()) error {
+	loc, err := c.App.Location()
 	if err != nil {
 		return err
 	}
@@ -44,9 +46,12 @@ func Run(ctx context.Context, c config.Schedule, log *slog.Logger, tasks []Task)
 	}
 	scheduler.Start()
 	log.Info("scheduler started", "tasks", len(tasks))
+	if onStarted != nil {
+		onStarted()
+	}
 	<-ctx.Done()
 	stopped := scheduler.Stop()
-	timer := time.NewTimer(c.ShutdownTimeout)
+	timer := time.NewTimer(c.Schedule.ShutdownTimeout)
 	defer timer.Stop()
 	select {
 	case <-stopped.Done():

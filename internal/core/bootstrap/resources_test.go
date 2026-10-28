@@ -99,7 +99,7 @@ func TestFailedOpenDoesNotPublishAndCanRetry(t *testing.T) {
 func TestOpenValidatesOnlySelectedResources(t *testing.T) {
 	c := config.Defaults()
 	c.Server.Port = -1
-	c.Schedule.Timezone = "invalid/timezone"
+	c.Schedule.ShutdownTimeout = -time.Second
 	c.Redis.Address = ""
 	// Command settings and unrequested Redis must not affect resource startup.
 	r, err := Open(context.Background(), c, Options{Name: "test", HTTP: true})

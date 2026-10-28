@@ -35,7 +35,7 @@ go run ./cmd config:init
 
 编辑生成的 `config.yaml`：
 
-- 设置 `app.name`，例如 `myapp`。
+- 设置 `app.name`，例如 `myapp`；`app.timezone` 默认为 `Asia/Hong_Kong`，用于定时调度及业务日期范围等计算。
 - 填写 MySQL 和 Redis 连接信息。
 
 实际配置文件已被 Git 忽略。默认配置路径相对于**当前工作目录**；部署建议使用绝对路径。
@@ -89,6 +89,16 @@ app --help
 
 `help`、`hello` 不加载配置或访问数据库；迁移、创建管理员不依赖 Redis。`force` 只修改迁移版本标记，必须先人工检查并修复实际表结构。MySQL DDL 不是整体事务，失败迁移可能留下部分表结构。
 
+三个常驻进程启动成功后直接向终端（标准错误输出）打印一行英文提示，不受日志级别或输出位置影响；原有 info 启动日志继续保留。示例：
+
+```text
+HTTP Server started, listening on http://127.0.0.1:8080
+Scheduler started, registered tasks: 1
+Queue Worker started, registered task types: 1, concurrency: 10
+```
+
+地址、注册数量和并发数使用实际值；队列显示注册的任务类型数量，不是等待执行的任务数量。
+
 ## 应用组织
 
 ```text
@@ -113,7 +123,7 @@ internal/
   service/settings/      系统设置能力；其他公共能力各建子目录
   util/
     str/                 无业务依赖的字符串工具
-    query/               GORM 分页查询辅助与 Page[T] 查询结果
+    query/               GORM 可选筛选 Scopes、分页辅助与 Page[T] 查询结果
   model/                 GORM 数据模型与关联
   command/               业务命令及显式注册
   schedule/              具体定时任务及显式注册
@@ -145,13 +155,15 @@ docs/                    API、扩展方法、部署说明
 
 数据库日期时间统一保存 UTC，精确到秒（`DATETIME`）；API 输出如 `2026-10-23T03:11:03Z`。
 
+`app.timezone` 使用明确的 IANA 时区（例如 `Asia/Hong_Kong`）或 `UTC`，不依赖操作系统本地时区；定时任务不再单独配置时区。请求时间字段直接使用标准 `time.Time` / `*time.Time`，只接受 RFC3339，例如 `2026-10-28T00:00:00+08:00` 或 `2026-10-27T16:00:00Z`。客户端决定时区并携带偏移，绑定不使用应用时区，也不额外归一化；解析后直接交给 validator、service 和查询工具。MySQL 连接按 UTC 编码时间参数，API 输出仍按资源约定使用 UTC。
+
 配置以 `config.yaml` 为唯一运行配置来源，不自动读取 `.env` 或环境变量。支持未知字段检查、默认值和按命令验证。日志支持 `debug/info/warn/error`，输出可选 `stdout/file/both`，文件按大小轮转。日志不输出 Authorization、密码、SQL 参数或请求正文。
 
 业务设置存入 MySQL `settings` 表，以 JSON 保留类型。Redis 使用永久 Hash `settings` 缓存整份设置，每个字段保存 JSON 编码的值；`settings:version` 保存永久版本号，防止旧查询覆盖更新后的缓存。设置通过无状态包函数 `settings.String/Bool/Int/Strings/Set/Update/List/ClearCache` 调用，无需实例或注入。定义集中在 `internal/service/settings/definitions.go`，现有 `site.name` 和 `site.maintenance` 仍为示例，后者不自动阻止请求。
 
-缓存未命中时合并代码默认值和数据库记录；读取和保存都检查已声明的 key、类型及设置规则。读取缓存失败时回源 MySQL，没有初始化 Redis 时直接读写数据库。修改提交数据库后递增版本并删除整个 Hash，失效最多重试 3 次、总计最多 3 秒；失败返回错误，数据库提交不会回滚。列表公开返回 key、type、value、default，JSON 类型保持不变。
+单值读取通过 HGET 只取目标字段，先检查已声明的 key 和 getter 类型；列表通过 HGETALL 读取整份缓存并检查设置项是否齐全。缓存命中只检查 JSON 类型，不重复执行设置专用规则。缺失或类型无效时合并代码默认值和数据库记录，完整校验后整份回填；保存前也执行完整校验。读取缓存失败时回源 MySQL，没有初始化 Redis 时直接读写数据库。修改提交数据库后递增版本并删除整个 Hash，失效最多重试 3 次、总计最多 3 秒；失败返回错误，数据库提交不会回滚。列表公开返回 key、type、value、default，JSON 类型保持不变。
 
-手动清理：`go run ./cmd settings:clear-cache`，只需要 Redis，不需要 MySQL。该命令和修改设置共用“递增版本 + 删除缓存”的失效逻辑。修改默认值或校验定义后，也可用它主动刷新缓存。
+手动清理：`go run ./cmd settings:clear-cache`，只需要 Redis，不需要 MySQL。该命令和修改设置共用“递增版本 + 删除缓存”的失效逻辑。
 
 ## 队列和定时任务
 

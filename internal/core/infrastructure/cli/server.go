@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 	"github.com/xvq/go-template/internal/core/bootstrap"
 	"github.com/xvq/go-template/internal/core/config"
@@ -15,6 +17,8 @@ func newServer(path *string) *cobra.Command {
 		if err := c.Validate("server"); err != nil {
 			return err
 		}
-		return bootstrap.RunServer(cmd.Context(), c)
+		return bootstrap.RunServer(cmd.Context(), c, func(address string) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "HTTP Server started, listening on http://%s\n", address)
+		})
 	}}
 }

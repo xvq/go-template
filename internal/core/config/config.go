@@ -25,8 +25,22 @@ type Config struct {
 	Queue      Queue      `yaml:"queue"`
 }
 type App struct {
-	Name string `yaml:"name"`
+	Name     string `yaml:"name"`
+	Timezone string `yaml:"timezone"`
 }
+
+// Location resolves the shared business timezone without changing time.Local.
+func (a App) Location() (*time.Location, error) {
+	if a.Timezone == "" || a.Timezone == "Local" {
+		return nil, fmt.Errorf("app.timezone 必须为明确的 IANA 时区或 UTC")
+	}
+	loc, err := time.LoadLocation(a.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("app.timezone 无效: %w", err)
+	}
+	return loc, nil
+}
+
 type Server struct {
 	Host            string        `yaml:"host"`
 	Port            int           `yaml:"port"`
@@ -86,7 +100,6 @@ type HTTPClient struct {
 	Proxy               string        `yaml:"proxy"`
 }
 type Schedule struct {
-	Timezone        string        `yaml:"timezone"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 }
 type QueueRedis struct {
@@ -108,14 +121,14 @@ type Queue struct {
 
 func Defaults() Config {
 	return Config{
-		App:        App{Name: "go-template"},
+		App:        App{Name: "go-template", Timezone: "Asia/Hong_Kong"},
 		Server:     Server{Host: "127.0.0.1", Port: 8080, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, RequestTimeout: 30 * time.Second, ShutdownTimeout: 15 * time.Second, BodyLimit: 4 << 20},
 		Log:        Log{Level: "info", Output: "stdout", Dir: "logs", MaxSizeMB: 100, MaxBackups: 7, MaxAgeDays: 14, Compress: true},
 		Database:   Database{Host: "127.0.0.1", Port: 3306, MaxOpenConns: 30, MaxIdleConns: 10, ConnMaxLifetime: 30 * time.Minute, ConnectTimeout: 5 * time.Second, IOTimeout: 30 * time.Second, SlowQuery: 500 * time.Millisecond},
 		Redis:      Redis{Address: "127.0.0.1:6379", Timeout: 3 * time.Second},
 		Auth:       Auth{Admin: Session{TokenTTL: 24 * time.Hour, AllowMultipleSessions: true, LoginLimit: 10, LoginWindow: time.Minute}},
 		HTTPClient: HTTPClient{Timeout: 30 * time.Second, ConnectTimeout: 5 * time.Second, MaxIdleConns: 100, MaxIdleConnsPerHost: 10, IdleConnTimeout: 90 * time.Second},
-		Schedule:   Schedule{Timezone: "Asia/Shanghai", ShutdownTimeout: 15 * time.Second},
+		Schedule:   Schedule{ShutdownTimeout: 15 * time.Second},
 		Queue:      Queue{Concurrency: 10, DefaultQueue: "default", MaxRetry: 3, TaskTimeout: 5 * time.Minute, ShutdownTimeout: 15 * time.Second, Queues: map[string]int{"default": 1}},
 	}
 }
@@ -143,6 +156,9 @@ func Parse(b []byte) (Config, error) {
 
 // Validate only the components required by the selected command.
 func (c Config) Validate(parts ...string) error {
+	if _, err := c.App.Location(); err != nil {
+		return err
+	}
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(c.Log.Level)); err != nil {
 		return fmt.Errorf("log.level 无效")
@@ -185,9 +201,6 @@ func (c Config) Validate(parts ...string) error {
 				}
 			}
 		case "schedule":
-			if _, err := time.LoadLocation(c.Schedule.Timezone); err != nil {
-				return fmt.Errorf("schedule.timezone 无效: %w", err)
-			}
 			if c.Schedule.ShutdownTimeout <= 0 {
 				return fmt.Errorf("schedule.shutdown_timeout 必须大于零")
 			}

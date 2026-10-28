@@ -32,7 +32,6 @@ var invalidateSettings = redis.NewScript(`redis.call('INCR', KEYS[2]); redis.cal
 
 func all(ctx context.Context) (map[string]json.RawMessage, error) {
 	defs := SettingDefinitions()
-	version := ""
 	cacheOK := core.Redis != nil
 	if cacheOK {
 		fields, err := core.Redis.HGetAll(ctx, cacheKey).Result()
@@ -50,15 +49,22 @@ func all(ctx context.Context) (map[string]json.RawMessage, error) {
 			cacheOK = false
 			core.Log.Warn("settings cache unavailable; using database")
 		}
-		if cacheOK {
-			v, e := core.Redis.Get(ctx, cacheKey+":version").Result()
-			if errors.Is(e, redis.Nil) {
-				version = "0"
-			} else if e == nil {
-				version = v
-			} else {
-				cacheOK = false
-			}
+	}
+	return loadSettings(ctx, defs, cacheOK)
+}
+
+// loadSettings validates a complete database snapshot and optionally fills Redis.
+// Read the generation before querying so concurrent invalidation rejects stale fills.
+func loadSettings(ctx context.Context, defs []SettingDefinition, cacheOK bool) (map[string]json.RawMessage, error) {
+	version := ""
+	if cacheOK {
+		v, err := core.Redis.Get(ctx, cacheKey+":version").Result()
+		if errors.Is(err, redis.Nil) {
+			version = "0"
+		} else if err == nil {
+			version = v
+		} else {
+			cacheOK = false
 		}
 	}
 	var rows []model.Setting
@@ -102,7 +108,7 @@ func validCache(values map[string]json.RawMessage, defs []SettingDefinition) boo
 	}
 	for _, d := range defs {
 		raw, ok := values[d.Key]
-		if !ok || d.validate(raw) != nil {
+		if !ok || d.validateType(raw) != nil {
 			return false
 		}
 	}
@@ -117,7 +123,38 @@ func Strings(ctx context.Context, key string) ([]string, error) {
 
 func read[T any](ctx context.Context, key, expected string) (T, error) {
 	var out T
-	values, err := all(ctx)
+	defs := SettingDefinitions()
+	var definition SettingDefinition
+	for _, d := range defs {
+		if d.Key == key {
+			definition = d
+			break
+		}
+	}
+	if definition.Key == "" || definition.Type != expected {
+		return out, fmt.Errorf("%w: setting %s is not %s", apperror.ErrInvalidSetting, key, expected)
+	}
+	cacheOK := core.Redis != nil
+	if cacheOK {
+		value, err := core.Redis.HGet(ctx, cacheKey, key).Result()
+		switch {
+		case err == nil:
+			raw := json.RawMessage(value)
+			if definition.validateType(raw) == nil {
+				if err := json.Unmarshal(raw, &out); err != nil {
+					return out, err
+				}
+				return out, nil
+			}
+			core.Log.Warn("invalid settings cache; reloading")
+		case errors.Is(err, redis.Nil):
+			// A missing field rebuilds the complete snapshot.
+		default:
+			cacheOK = false
+			core.Log.Warn("settings cache unavailable; using database")
+		}
+	}
+	values, err := loadSettings(ctx, defs, cacheOK)
 	if err != nil {
 		return out, err
 	}

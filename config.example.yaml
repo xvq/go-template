@@ -1,5 +1,6 @@
 app:
   name: go-template
+  timezone: Asia/Hong_Kong
 
 server:
   host: 127.0.0.1
@@ -58,7 +59,6 @@ http_client:
   proxy: ""
 
 schedule:
-  timezone: Asia/Shanghai
   shutdown_timeout: 15s
 
 queue:

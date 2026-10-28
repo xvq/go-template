@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 	"github.com/xvq/go-template/internal/core"
 	"github.com/xvq/go-template/internal/core/bootstrap"
@@ -23,6 +25,9 @@ func newSchedule(path *string) *cobra.Command {
 			return err
 		}
 		defer r.Close()
-		return scheduler.Run(cmd.Context(), c.Schedule, core.Log, schedule.Register())
+		tasks := schedule.Register()
+		return scheduler.Run(cmd.Context(), c, core.Log, tasks, func() {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Scheduler started, registered tasks: %d\n", len(tasks))
+		})
 	}}
 }
