@@ -72,10 +72,10 @@ func RunServer(ctx context.Context, c config.Config, onStarted func(string)) err
 	}
 	return serve(ctx, app, ln, c.Server.ShutdownTimeout, cancel, func() {
 		address := ln.Addr().String()
-		core.Log.Info("HTTP server started", "address", address)
 		if onStarted != nil {
 			onStarted(address)
 		}
+		core.Log.Info("HTTP server started", "address", address)
 	})
 }
 

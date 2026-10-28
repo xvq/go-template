@@ -27,8 +27,8 @@ func newQueueWork(path *string) *cobra.Command {
 		if err = srv.Start(mux); err != nil {
 			return err
 		}
-		core.Log.Info("queue worker started", "task_types", count, "concurrency", c.Queue.Concurrency)
 		fmt.Fprintf(cmd.ErrOrStderr(), "Queue Worker started, registered task types: %d, concurrency: %d\n", count, c.Queue.Concurrency)
+		core.Log.Info("queue worker started", "task_types", count, "concurrency", c.Queue.Concurrency)
 		<-cmd.Context().Done()
 		srv.Shutdown()
 		return nil

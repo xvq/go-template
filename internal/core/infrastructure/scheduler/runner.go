@@ -45,10 +45,10 @@ func Run(ctx context.Context, c config.Config, log *slog.Logger, tasks []Task, o
 		}
 	}
 	scheduler.Start()
-	log.Info("scheduler started", "tasks", len(tasks))
 	if onStarted != nil {
 		onStarted()
 	}
+	log.Info("scheduler started", "tasks", len(tasks))
 	<-ctx.Done()
 	stopped := scheduler.Stop()
 	timer := time.NewTimer(c.Schedule.ShutdownTimeout)
