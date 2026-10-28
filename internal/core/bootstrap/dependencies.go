@@ -8,7 +8,7 @@ func ServerOptions(c config.Config) Options {
 		Name:     "server",
 		Database: true,
 		Redis:    true,
-		HTTP:     true,
+		HTTP:     false,
 		Queue:    c.Queue.Enabled,
 	}
 }

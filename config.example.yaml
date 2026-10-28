@@ -1,6 +1,6 @@
 app:
   name: go-template
-  timezone: Asia/Hong_Kong
+  timezone: Asia/Shanghai
 
 server:
   host: 127.0.0.1

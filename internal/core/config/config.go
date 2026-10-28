@@ -121,7 +121,7 @@ type Queue struct {
 
 func Defaults() Config {
 	return Config{
-		App:        App{Name: "go-template", Timezone: "Asia/Hong_Kong"},
+		App:        App{Name: "go-template", Timezone: "Asia/Shanghai"},
 		Server:     Server{Host: "127.0.0.1", Port: 8080, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, RequestTimeout: 30 * time.Second, ShutdownTimeout: 15 * time.Second, BodyLimit: 4 << 20},
 		Log:        Log{Level: "info", Output: "stdout", Dir: "logs", MaxSizeMB: 100, MaxBackups: 7, MaxAgeDays: 14, Compress: true},
 		Database:   Database{Host: "127.0.0.1", Port: 3306, MaxOpenConns: 30, MaxIdleConns: 10, ConnMaxLifetime: 30 * time.Minute, ConnectTimeout: 5 * time.Second, IOTimeout: 30 * time.Second, SlowQuery: 500 * time.Millisecond},

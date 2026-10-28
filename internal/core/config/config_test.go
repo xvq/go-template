@@ -14,7 +14,7 @@ func TestExampleAndScopedValidation(t *testing.T) {
 	if err = c.Validate("server", "database", "redis", "http_client", "schedule"); err != nil {
 		t.Fatal(err)
 	}
-	if c.Auth.Admin.TokenTTL != 24*time.Hour || !c.Auth.Admin.AllowMultipleSessions || c.Queue.Enabled || c.App.Timezone != "Asia/Hong_Kong" {
+	if c.Auth.Admin.TokenTTL != 24*time.Hour || !c.Auth.Admin.AllowMultipleSessions || c.Queue.Enabled || c.App.Timezone != "Asia/Shanghai" {
 		t.Fatal("wrong example defaults")
 	}
 	c.Database.Database = ""
@@ -31,7 +31,7 @@ func TestExampleAndScopedValidation(t *testing.T) {
 }
 
 func TestApplicationTimezone(t *testing.T) {
-	for _, zone := range []string{"Asia/Hong_Kong", "America/New_York", "UTC"} {
+	for _, zone := range []string{"Asia/Shanghai", "America/New_York", "UTC"} {
 		c := Defaults()
 		c.App.Timezone = zone
 		loc, err := c.App.Location()
